@@ -126,6 +126,4 @@ git push origin feature/your-feature-name
 3. Ensure the target branch is set to `develop`.
 4. Add a short description of your changes and submit the PR for review.
 
-```
-
 
