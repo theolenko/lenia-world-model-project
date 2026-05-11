@@ -1,0 +1,1 @@
+# Definition von MSE, VICReg oder JEPA-Losses
