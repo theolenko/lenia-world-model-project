@@ -1,0 +1,1 @@
+# Der Teil für Setup A (Pixel-Prediction)
