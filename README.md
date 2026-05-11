@@ -31,8 +31,6 @@ lenia-world-models/
 ## 2. Branch Protection Rules
 To prevent accidental pushes to protected branches, the following rules are applied to both `main` and `develop`:
 - **Require a pull request before merging**: No direct pushes allowed.
-- **Require approvals**: At least one team member must review the code.
-- **Do not allow bypassing**: Admins are also subject to these rules.
 
 ---
 
