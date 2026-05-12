@@ -1,1 +1,43 @@
-# Standard-Parameter
+data:
+  train_path: data/lenia_train.npy   # or .h5
+  val_path: data/lenia_val.npy
+  batch_size: 64
+  num_workers: 4
+
+model:
+  embed_dim: 128
+  ema_momentum: 0.99
+  predictor_hidden_dim: 256
+
+training:
+  num_epochs: 100
+  learning_rate: 1.0e-3
+  weight_decay: 0.0
+  log_interval: 50    # batches
+  checkpoint_interval: 10  # epochs
+
+jepa:
+  use_variance_reg: false
+  use_covariance_reg: false
+  var_reg_weight: 1.0
+  cov_reg_weight: 0.04
+
+hpo:
+  n_trials: 50
+  hpo_epochs: 20          # epochs per trial (much shorter than full training)
+  study_name: null         # defaults to "lenia_{setup}_hpo" if null
+  storage: null            # e.g. "sqlite:///experiments/hpo.db" for persistence
+  direction: minimize
+  pruner: median           # "median" or "none"
+
+  search_space:
+    # Shared
+    embed_dim: [64, 128, 256]
+    learning_rate: [1.0e-4, 1.0e-2]
+    weight_decay: [1.0e-6, 1.0e-2]
+    batch_size: [32, 64, 128]
+    # JEPA-only
+    ema_momentum: [0.90, 0.999]
+    predictor_hidden_dim: [128, 256, 512]
+    var_reg_weight: [0.1, 10.0]
+    cov_reg_weight: [1.0e-3, 0.1]
