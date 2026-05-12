@@ -148,27 +148,7 @@ All scripts are run from the **repository root**.
 
 ---
 
-### Quick start — no real data needed (`--dummy`)
-
-Both training scripts accept a `--dummy` flag that generates random in-memory tensors instead of loading files from disk.  Use this to verify the full pipeline works before committing to a full training run.
-
-```bash
-# Pixel-prediction setup, synthetic data
-python scripts/train_single.py --setup pixel --dummy
-
-# JEPA setup, synthetic data
-python scripts/train_single.py --setup jepa --dummy
-
-# HPO with dummy data (3 trials, 2 epochs each — instant smoke-test)
-python scripts/run_hpo.py --setup pixel --dummy --n-trials 3 --hpo-epochs 2
-python scripts/run_hpo.py --setup jepa  --dummy --n-trials 3 --hpo-epochs 2
-```
-
-Dummy data consists of 200 random `(1, 64, 64)` frame pairs for training and 40 for validation.  Loss values will not be meaningful, but the code path is identical to a real run.
-
----
-
-### Running with real Lenia data
+### Data
 
 #### Where does the data go?
 
@@ -180,27 +160,123 @@ data/
 └── lenia_val.npy     ← validation trajectories
 ```
 
-HDF5 files (`.h5` / `.hdf5`) are also supported — the dataset class detects the format automatically and reads the array stored under the key `frames`.
+HDF5 files (`.h5` / `.hdf5`) are also supported — the dataset class reads the array stored under the key `frames`.
 
-#### Expected data format
-
-The loader accepts NumPy arrays in any of these shapes:
+#### Expected array shape
 
 | Shape | Meaning |
 |---|---|
 | `(N, T, H, W)` | N trajectories, T timesteps, spatial H×W — **most common** |
 | `(N, T, 1, H, W)` | Same with explicit channel dim |
-| `(T, H, W)` | Single trajectory, no channel |
-| `(T, 1, H, W)` | Single trajectory, with channel |
+| `(T, H, W)` | Single trajectory |
 
-- `N` — number of independent Lenia trajectories
-- `T` — length of each trajectory (number of frames); at least 2
-- `H = W = 64` — spatial resolution expected by the encoder
-- Values must be in `[0, 1]` (or any positive range — the loader normalises by the global max)
+- `H = W = 64` — spatial resolution required by the encoder
+- Values in any positive range are fine; the loader normalises by the global max
 
-Each consecutive pair of frames within a trajectory becomes one training sample `(frame_t, frame_t_plus_1)`.  With N=50 trajectories of T=200 frames you get 50×199 = 9 950 training pairs.
+Each consecutive frame pair within a trajectory becomes one training sample.  With N=50 trajectories of T=200 frames you get 50×199 = 9 950 training pairs.
 
-#### Running a full training
+#### No real data yet? Use `--dummy`
+
+Both scripts accept `--dummy`, which generates random in-memory tensors and skips disk I/O entirely.  Use it to verify the full pipeline before committing to a real run:
+
+```bash
+python scripts/train_single.py --setup pixel --dummy
+python scripts/train_single.py --setup jepa  --dummy
+python scripts/run_hpo.py      --setup pixel --dummy --n-trials 3 --hpo-epochs 2
+```
+
+---
+
+### Full training workflow (step by step)
+
+> The same workflow applies to both `pixel` and `jepa` setups.  Run it once for each.
+
+#### Step 1 — Smoke-test the pipeline
+
+```bash
+python scripts/train_single.py --setup pixel --dummy
+```
+
+If this completes without errors, the environment is working.
+
+#### Step 2 — Find good hyperparameters with HPO
+
+`run_hpo.py` runs many short trials (each `hpo.hpo_epochs` epochs long, default 20) and finds the parameter combination with the lowest validation loss.  It does **not** produce a final trained model — it only identifies good settings.
+
+```bash
+# 50 trials, ephemeral (results only in memory)
+python scripts/run_hpo.py --setup pixel
+python scripts/run_hpo.py --setup jepa
+
+# Recommended: persistent study — survives interruptions, can be resumed
+python scripts/run_hpo.py --setup pixel \
+    --storage sqlite:///experiments/hpo.db \
+    --study-name pixel_hpo
+
+# Resume an interrupted study (same --storage and --study-name)
+python scripts/run_hpo.py --setup pixel \
+    --storage sqlite:///experiments/hpo.db \
+    --study-name pixel_hpo --n-trials 20   # adds 20 more trials
+```
+
+When finished, the best parameters are printed to the terminal and saved to:
+
+```
+experiments/hpo_pixel_best_params.yaml
+experiments/hpo_jepa_best_params.yaml
+```
+
+Example output file:
+
+```yaml
+best_val_loss: 0.002341
+params:
+  batch_size: 64
+  embed_dim: 256
+  learning_rate: 0.0028
+  weight_decay: 2.1e-06
+  # JEPA only:
+  ema_momentum: 0.97
+  predictor_hidden_dim: 512
+  use_variance_reg: false
+  use_covariance_reg: false
+```
+
+#### Step 3 — Copy the best params into `config.yaml`
+
+Open `config.yaml` and update the values that appear in the HPO result.  The mapping is one-to-one:
+
+| Key in `hpo_*_best_params.yaml` | Where it goes in `config.yaml` |
+|---|---|
+| `embed_dim` | `model.embed_dim` |
+| `learning_rate` | `training.learning_rate` |
+| `weight_decay` | `training.weight_decay` |
+| `batch_size` | `data.batch_size` |
+| `ema_momentum` | `model.ema_momentum` *(JEPA only)* |
+| `predictor_hidden_dim` | `model.predictor_hidden_dim` *(JEPA only)* |
+| `use_variance_reg` | `jepa.use_variance_reg` *(JEPA only)* |
+| `var_reg_weight` | `jepa.var_reg_weight` *(JEPA only, if reg enabled)* |
+| `use_covariance_reg` | `jepa.use_covariance_reg` *(JEPA only)* |
+| `cov_reg_weight` | `jepa.cov_reg_weight` *(JEPA only, if reg enabled)* |
+
+Keys not listed (e.g. `num_epochs`) are not touched by HPO — keep them as they are.
+
+After editing, `config.yaml` might look like this for a pixel run:
+
+```yaml
+data:
+  batch_size: 64          # ← from HPO
+
+model:
+  embed_dim: 256          # ← from HPO
+
+training:
+  num_epochs: 100         # ← unchanged, set this as high as you want
+  learning_rate: 0.0028   # ← from HPO
+  weight_decay: 2.1e-06   # ← from HPO
+```
+
+#### Step 4 — Run the full training
 
 ```bash
 python scripts/train_single.py --setup pixel
@@ -214,65 +290,45 @@ Checkpoints and TensorBoard logs are written to `experiments/{setup}_{timestamp}
 tensorboard --logdir experiments/
 ```
 
----
-
-### Hyperparameter optimisation (`run_hpo.py`)
-
-`run_hpo.py` uses **Optuna** to search over the hyperparameter space defined in `config.yaml` under `hpo.search_space`.  Each trial trains for `hpo.hpo_epochs` epochs (default 20) and reports the validation loss.  A `MedianPruner` discards unpromising trials early.
-
-```bash
-# Basic run — 50 trials, results in memory only
-python scripts/run_hpo.py --setup pixel
-python scripts/run_hpo.py --setup jepa --n-trials 30
-
-# Persistent study — can be interrupted and resumed
-python scripts/run_hpo.py --setup pixel \
-    --storage sqlite:///experiments/hpo.db \
-    --study-name pixel_hpo
-
-# Resume the same study (same --storage and --study-name)
-python scripts/run_hpo.py --setup pixel \
-    --storage sqlite:///experiments/hpo.db \
-    --study-name pixel_hpo --n-trials 20
-
-# Parallel trials (requires shared storage and num_workers: 0 in config.yaml)
-python scripts/run_hpo.py --setup jepa \
-    --storage sqlite:///experiments/hpo.db \
-    --n-jobs 4
-```
-
-After all trials complete, the best hyperparameters are printed and saved to:
-
-```
-experiments/hpo_{setup}_best_params.yaml
-```
-
-Per-trial TensorBoard logs land in `experiments/hpo_{setup}_trial_XXXX/`.
+Both setups use the same random seed (42), so the encoder is initialised identically — this is required for a fair comparison between the two paradigms.
 
 ---
 
-### Configuration knobs (`config.yaml`)
+### HPO options reference
 
-All paths and hyperparameters live in **`config.yaml`** at the repository root.  The table below lists the most relevant knobs:
+| Flag | Default | Effect |
+|---|---|---|
+| `--n-trials N` | `hpo.n_trials` (50) | Number of Optuna trials to run |
+| `--hpo-epochs N` | `hpo.hpo_epochs` (20) | Training epochs per trial |
+| `--study-name NAME` | `lenia_{setup}_hpo` | Name of the Optuna study |
+| `--storage URL` | `hpo.storage` (none) | Backend for persistence, e.g. `sqlite:///experiments/hpo.db` |
+| `--n-jobs N` | `1` | Parallel trials; requires shared storage and `num_workers: 0` in config |
+| `--dummy` | off | Use random in-memory data instead of loading from disk |
+
+CLI flags always override the corresponding values in `config.yaml`.
+
+---
+
+### `config.yaml` reference
+
+All paths and hyperparameters live in **`config.yaml`** at the repository root.
 
 | Section | Key | What it controls |
 |---|---|---|
 | `data` | `train_path` / `val_path` | Paths to your `.npy` or `.h5` data files |
-| `data` | `batch_size` | Mini-batch size during training |
-| `data` | `num_workers` | DataLoader worker processes (set to `0` for HPO with `--n-jobs > 1`) |
-| `model` | `embed_dim` | Encoder output / embedding dimensionality (default 128) |
-| `model` | `ema_momentum` | EMA decay for the JEPA target encoder (default 0.99) |
-| `model` | `predictor_hidden_dim` | Hidden width of the JEPA MLP predictor (default 256) |
-| `training` | `num_epochs` | Total epochs for a full `train_single.py` run |
+| `data` | `batch_size` | Mini-batch size |
+| `data` | `num_workers` | DataLoader worker processes (use `0` with HPO `--n-jobs > 1`) |
+| `model` | `embed_dim` | Encoder output dimensionality |
+| `model` | `ema_momentum` | EMA decay for the JEPA target encoder |
+| `model` | `predictor_hidden_dim` | Hidden width of the JEPA MLP predictor |
+| `training` | `num_epochs` | Total epochs for a full training run |
 | `training` | `learning_rate` | Adam learning rate |
 | `training` | `weight_decay` | Adam weight decay |
 | `training` | `checkpoint_interval` | Save a checkpoint every N epochs |
-| `jepa` | `use_variance_reg` | Enable VICReg variance anti-collapse term (default `false`) |
-| `jepa` | `use_covariance_reg` | Enable VICReg covariance anti-redundancy term (default `false`) |
+| `jepa` | `use_variance_reg` | Enable VICReg variance anti-collapse term |
+| `jepa` | `use_covariance_reg` | Enable VICReg covariance anti-redundancy term |
 | `jepa` | `var_reg_weight` / `cov_reg_weight` | Loss weights for the regularisers above |
 | `hpo` | `n_trials` | Default number of Optuna trials |
-| `hpo` | `hpo_epochs` | Training epochs per HPO trial |
-| `hpo` | `storage` | Optuna storage URL for persistent / resumable studies |
+| `hpo` | `hpo_epochs` | Epochs per HPO trial |
+| `hpo` | `storage` | Optuna storage URL |
 | `hpo` | `search_space` | Bounds / choices for each tuneable hyperparameter |
-
-CLI flags (`--n-trials`, `--hpo-epochs`, `--storage`, `--study-name`) always override the corresponding `hpo.*` config values when provided.
