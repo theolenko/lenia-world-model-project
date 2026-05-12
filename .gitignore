@@ -220,3 +220,8 @@ __marimo__/
 # Virtual Environment
 lenia-wm/
 
+# Experiment Folder with logs and checkpoint models
+experiments/
+
+
+
