@@ -1,0 +1,10 @@
+best_val_loss: 0.00332448142580688
+params:
+  batch_size: 128
+  ema_momentum: 0.9318271905844425
+  embed_dim: 256
+  learning_rate: 0.0028739798689770444
+  predictor_hidden_dim: 512
+  use_covariance_reg: false
+  use_variance_reg: false
+  weight_decay: 2.1513101703457566e-06
