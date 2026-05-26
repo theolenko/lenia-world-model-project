@@ -2,10 +2,27 @@ import copy
 import torch
 import torch.nn as nn
 
-from models.encoder import LeniaEncoder
+from models.encoder import LeniaEncoder, SimpleCNNEncoder, ViTEncoder
 from models.decoder import LeniaDecoder
 from models.predictor import LeniaPredictor
 
+_ENCODER_REGISTRY = {
+    "cnn": LeniaEncoder,
+    "simple_cnn": SimpleCNNEncoder,
+    # pool=True collapses (B, N_patches, embed_dim) → (B, embed_dim) via
+    # Global Average Pooling, making ViTEncoder compatible with JEPAWorldModel
+    # and PixelWorldModel, which both expect a flat embedding vector.
+    "vit": lambda embed_dim: ViTEncoder(embed_dim=embed_dim, pool=True),
+}
+
+
+def _build_encoder(encoder_type: str, embed_dim: int) -> nn.Module:
+    if encoder_type not in _ENCODER_REGISTRY:
+        raise ValueError(
+            f"Unknown encoder_type '{encoder_type}'. "
+            f"Choose from: {list(_ENCODER_REGISTRY)}"
+        )
+    return _ENCODER_REGISTRY[encoder_type](embed_dim=embed_dim)
 
 class PixelWorldModel(nn.Module):
     """World model for Setup A: predicts next Lenia frame in pixel space.
@@ -17,9 +34,9 @@ class PixelWorldModel(nn.Module):
         embed_dim: Embedding dimensionality. Default: 128.
     """
 
-    def __init__(self, embed_dim: int = 128) -> None:
+    def __init__(self, embed_dim: int = 128, encoder_type: str ="cnn") -> None:
         super().__init__()
-        self.encoder = LeniaEncoder(embed_dim=embed_dim)
+        self.encoder = _build_encoder(encoder_type,embed_dim)
         self.decoder = LeniaDecoder(embed_dim=embed_dim)
 
     def forward(self, frame_t: torch.Tensor) -> torch.Tensor:
@@ -63,12 +80,13 @@ class JEPAWorldModel(nn.Module):
         embed_dim: int = 128,
         ema_momentum: float = 0.99,
         predictor_hidden_dim: int = 256,
+        encoder_type: str = "cnn",
     ) -> None:
         super().__init__()
         self.ema_momentum = ema_momentum
 
-        self.online_encoder = LeniaEncoder(embed_dim=embed_dim)
-        self.target_encoder = LeniaEncoder(embed_dim=embed_dim)
+        self.online_encoder = _build_encoder(encoder_type, embed_dim)
+        self.target_encoder = _build_encoder(encoder_type, embed_dim)
         self.predictor = LeniaPredictor(embed_dim=embed_dim, hidden_dim=predictor_hidden_dim)
 
         # Initialise target encoder as a copy of the online encoder
