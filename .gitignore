@@ -223,7 +223,8 @@ lenia-wm/
 # Experiment Folder with logs and checkpoint models
 experiments/
 
-
+# data folder
+data/
 
 # IntelliJ IDEA / PyCharm
 .idea/
