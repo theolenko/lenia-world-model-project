@@ -1,6 +1,6 @@
 data:
-  train_path: data/lenia_train.npy   # or .h5
-  val_path: data/lenia_val.npy
+  train_path: data/lenia_train_chunked.h5
+  val_path: data/lenia_val_chunked.h5
   batch_size: 64
   num_workers: 4
 
