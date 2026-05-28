@@ -25,9 +25,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from models.world_model import JEPAWorldModel, PixelWorldModel
 from training.trainer import Trainer
 
-# ─── Fixed seed for reproducibility across both setups ───────────────────────
 SEED = 42
-
 
 def set_seed(seed: int) -> None:
     """Set Python, NumPy, and PyTorch random seeds for reproducibility."""
@@ -38,9 +36,6 @@ def set_seed(seed: int) -> None:
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
 
-
-# ─── Dataset ─────────────────────────────────────────────────────────────────
-
 class LeniaDataset(Dataset):
     """Yields consecutive (frame_t, frame_t_plus_1) pairs from Lenia trajectories.
 
@@ -50,60 +45,89 @@ class LeniaDataset(Dataset):
         (T, H, W)                           — single trajectory, no channel
         (T, 1, H, W)                        — single trajectory, with channel
 
-    Also supports .h5 / .hdf5 files with a 'frames' dataset of the same shapes.
+    Also supports .h5 / .hdf5 files with a 'frames' dataset of shape (N, T, H, W).
+    HDF5 files are read lazily (one frame pair per __getitem__) so that large
+    datasets (e.g. 1800 × 200 × 64 × 64 ≈ 5.5 GB) don't need to fit in RAM.
 
     Frames are normalised to [0, 1] (divided by their maximum if > 1).
     """
 
     def __init__(self, data_path: str) -> None:
-        data = self._load(data_path)
+        self._path = data_path
+        self._h5file = None   # opened lazily per-worker; never set before fork
 
-        # Normalise to [0, 1]
-        data = data.astype(np.float32)
-        if data.max() > 1.0:
-            data = data / data.max()
-
-        # Ensure shape is (N, T, 1, H, W)
-        if data.ndim == 3:          # (T, H, W)
-            data = data[:, None, :, :]      # (T, 1, H, W)
-            data = data[None]               # (1, T, 1, H, W)
-        elif data.ndim == 4:
-            if data.shape[1] == 1 or data.shape[1] > 10:
-                # (T, 1, H, W)  →  (1, T, 1, H, W)
-                data = data[None]
-            else:
-                # (N, T, H, W)  →  (N, T, 1, H, W)
-                data = data[:, :, None, :, :]
-        elif data.ndim == 5:
-            pass  # already (N, T, 1, H, W)
+        if data_path.endswith(".h5") or data_path.endswith(".hdf5"):
+            import h5py
+            with h5py.File(data_path, "r") as f:
+                shape = f["frames"].shape
+                self._needs_norm = float(f["frames"][0, 0].max()) > 1.0
+            if len(shape) != 4:
+                raise ValueError(
+                    f"HDF5 'frames' must be 4-D (N, T, H, W); got shape {shape}"
+                )
+            N, T, H, W = shape
+            self._is_h5 = True
         else:
-            raise ValueError(f"Unexpected data shape: {data.shape}")
+            data = self._load_npy(data_path)
+            self._is_h5 = False
+            N, T, C, H, W = data.shape
+            self._data = data
 
-        N, T, C, H, W = data.shape
-        self.data = data
         self.index: list[tuple[int, int]] = [
             (n, t) for n in range(N) for t in range(T - 1)
         ]
 
+    def __getstate__(self) -> dict:
+        state = self.__dict__.copy()
+        state["_h5file"] = None   # file handles are not picklable
+        return state
+
+    def __setstate__(self, state: dict) -> None:
+        self.__dict__.update(state)
+
     @staticmethod
-    def _load(path: str) -> np.ndarray:
-        if path.endswith(".npy"):
-            return np.load(path)
-        if path.endswith(".h5") or path.endswith(".hdf5"):
-            import h5py
-            with h5py.File(path, "r") as f:
-                return f["frames"][:]
-        raise ValueError(f"Unsupported data format: {path}")
+    def _load_npy(path: str) -> np.ndarray:
+        data = np.load(path).astype(np.float32)
+        if data.max() > 1.0:
+            data /= data.max()
+
+        if data.ndim == 3:
+            data = data[:, None, :, :][None]
+        elif data.ndim == 4:
+            if data.shape[1] == 1:
+                data = data[None]
+            else:
+                data = data[:, :, None, :, :]
+        elif data.ndim == 5:
+            pass
+        else:
+            raise ValueError(f"Unexpected data shape: {data.shape}")
+
+        return data
 
     def __len__(self) -> int:
         return len(self.index)
 
     def __getitem__(self, idx: int):
         n, t = self.index[idx]
-        frame_t = torch.from_numpy(self.data[n, t])
-        frame_t_plus_1 = torch.from_numpy(self.data[n, t + 1])
-        return frame_t, frame_t_plus_1
 
+        if self._is_h5:
+            if self._h5file is None:
+                import h5py
+                self._h5file = h5py.File(self._path, "r")
+            ft  = self._h5file["frames"][n, t    ].astype(np.float32)
+            ft1 = self._h5file["frames"][n, t + 1].astype(np.float32)
+            if self._needs_norm:
+                denom = max(ft.max(), ft1.max(), 1e-8)
+                ft  /= denom
+                ft1 /= denom
+            frame_t       = torch.from_numpy(ft ).unsqueeze(0)
+            frame_t_plus_1 = torch.from_numpy(ft1).unsqueeze(0)
+        else:
+            frame_t        = torch.from_numpy(self._data[n, t    ])
+            frame_t_plus_1 = torch.from_numpy(self._data[n, t + 1])
+
+        return frame_t, frame_t_plus_1
 
 def _make_dummy_loaders(batch_size: int) -> tuple[DataLoader, DataLoader]:
     """Create in-memory random dataloaders for smoke-testing without real data.
@@ -119,7 +143,6 @@ def _make_dummy_loaders(batch_size: int) -> tuple[DataLoader, DataLoader]:
     train_loader = DataLoader(_rand_ds(200), batch_size=batch_size, shuffle=True, drop_last=True)
     val_loader = DataLoader(_rand_ds(40), batch_size=batch_size, shuffle=False)
     return train_loader, val_loader
-
 
 def build_dataloaders(
     cfg: dict,
@@ -163,9 +186,6 @@ def build_dataloaders(
     )
     return train_loader, val_loader
 
-
-# ─── Core training logic (shared with run_hpo) ───────────────────────────────
-
 def train_trial(
     setup_type: str,
     cfg: dict,
@@ -203,7 +223,6 @@ def train_trial(
     """
     ov = overrides or {}
 
-    # Resolve effective hyperparameters (overrides win over config)
     embed_dim: int = ov.get("embed_dim", cfg["model"]["embed_dim"])
     learning_rate: float = ov.get("learning_rate", cfg["training"]["learning_rate"])
     weight_decay: float = ov.get("weight_decay", cfg["training"]["weight_decay"])
@@ -228,7 +247,6 @@ def train_trial(
 
     train_loader, val_loader = build_dataloaders(cfg, batch_size=batch_size, dummy=dummy)
 
-    # Build model
     if setup_type == "pixel":
         model = PixelWorldModel(embed_dim=embed_dim)
     else:
@@ -290,9 +308,6 @@ def train_trial(
     trainer.writer.close()
     return val_loss
 
-
-# ─── CLI ─────────────────────────────────────────────────────────────────────
-
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Train a Lenia world model.")
     parser.add_argument(
@@ -313,9 +328,6 @@ def parse_args() -> argparse.Namespace:
              "Useful for a quick smoke-test without real Lenia data.",
     )
     return parser.parse_args()
-
-
-# ─── Main ─────────────────────────────────────────────────────────────────────
 
 def main() -> None:
     args = parse_args()
@@ -340,7 +352,6 @@ def main() -> None:
         log_dir=log_dir,
         dummy=args.dummy,
     )
-
 
 if __name__ == "__main__":
     main()
