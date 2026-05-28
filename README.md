@@ -5,24 +5,34 @@ code related to seminar-project in "Mathematics and AI Internship" module of Dat
 ## Project Structure
 
 ```text
-lenia-world-models/
-├── data/                   # Raw and processed Lenia trajectories (.npy or .h5)
-├── models/                 # Neural network architectures
-│   ├── encoder.py          # CNN/Transformer backbone
-│   ├── decoder.py          # Pixel-prediction decoder (Setup A)
-│   ├── predictor.py        # JEPA latent predictor (Setup B)
-│   └── world_model.py      # Integrated model logic
-├── training/               # Training logic and loops
-│   ├── trainer.py          # Training orchestrator
-│   └── losses.py           # Loss functions (MSE, VICReg, etc.)
-├── scripts/                # Executable scripts
-│   ├── generate_data.py    # Lenia simulation generator
-│   ├── train_single.py     # Single training execution
-│   └── run_hpo.py          # Optuna hyperparameter optimization
-├── experiments/            # Checkpoints, logs, and plots
-├── utils/                  # Helper functions (visualization, physics)
-├── config.yaml             # Global configuration parameters
-└── requirements.txt        # Python dependencies
+lenia-world-model-project/
+├── data/                        # Lenia trajectory files (gitignored)
+│   ├── lenia_train_chunked.h5   # Training data — per-frame chunks (1,1,64,64) ← use this
+│   ├── lenia_val_chunked.h5     # Validation data — per-frame chunks (1,1,64,64) ← use this
+│   ├── lenia_train.h5           # Original (per-trajectory chunks, slow random access)
+│   └── lenia_val.h5             # Original (per-trajectory chunks)
+├── models/                      # Neural network architectures
+│   ├── encoder.py               # CNN/Transformer backbone
+│   ├── decoder.py               # Pixel-prediction decoder (Setup A)
+│   ├── predictor.py             # JEPA latent predictor (Setup B)
+│   └── world_model.py           # Integrated model logic
+├── training/                    # Training logic and loops
+│   ├── trainer.py               # Training orchestrator
+│   └── losses.py                # Loss functions (MSE, VICReg, etc.)
+├── scripts/                     # Executable scripts
+│   ├── generate_data.py         # Lenia simulation generator
+│   ├── train_single.py          # Single training execution + LeniaDataset
+│   ├── run_hpo.py               # Optuna hyperparameter optimization
+│   ├── rechunk_data.py          # Convert HDF5 from per-trajectory to per-frame chunks
+│   ├── benchmark_loading.py     # Measure DataLoader throughput before/after rechunking
+│   ├── smoke_test.py            # End-to-end pipeline smoke test (Steps 2–6)
+│   └── check_data.py            # Data validation and visualisation (Step 1)
+├── experiments/                 # Checkpoints, logs, and plots
+│   ├── pipeline_smoke_test.md   # Smoke test report (bugs found, quantitative results)
+│   └── rechunk_report.md        # Rechunking benchmark report (47× speedup)
+├── utils/                       # Helper functions (visualization, physics)
+├── config.yaml                  # Global configuration parameters
+└── requirements.txt             # Python dependencies
 ```
 
 ## 1. Branching Strategy
@@ -150,17 +160,32 @@ All scripts are run from the **repository root**.
 
 ### Data
 
-#### Where does the data go?
+#### HDF5 files (primary format)
 
-Place your Lenia trajectory files in the `data/` directory:
+Place the raw `.h5` files in `data/` and rechunk them before training (see below).  The dataset class reads the array stored under the key `"frames"`.
 
 ```
 data/
-├── lenia_train.npy   ← training trajectories
-└── lenia_val.npy     ← validation trajectories
+├── lenia_train.h5           ← raw (slow random access, keep as backup)
+├── lenia_val.h5             ← raw
+├── lenia_train_chunked.h5   ← rechunked, use for training
+└── lenia_val_chunked.h5     ← rechunked, use for training
 ```
 
-HDF5 files (`.h5` / `.hdf5`) are also supported — the dataset class reads the array stored under the key `frames`.
+#### Why rechunk?
+
+The raw files use chunk layout `(1, 200, 64, 64)` — one 3 MB chunk per trajectory.  Shuffled `DataLoader` access decompresses the full chunk for every frame, giving ~1 200 ms/batch.
+
+After rechunking to `(1, 1, 64, 64)` (one 16 KB chunk per frame), only the requested frame is decompressed: **~25 ms/batch — 47× faster**.  See `experiments/rechunk_report.md` for benchmark details.
+
+#### Rechunk once after receiving the raw files
+
+```bash
+python scripts/rechunk_data.py --input data/lenia_train.h5 --output data/lenia_train_chunked.h5
+python scripts/rechunk_data.py --input data/lenia_val.h5   --output data/lenia_val_chunked.h5
+```
+
+Both files are verified automatically (5 random frames compared bit-for-bit against the original).
 
 #### Expected array shape
 
@@ -172,12 +197,11 @@ HDF5 files (`.h5` / `.hdf5`) are also supported — the dataset class reads the 
 
 - `H = W = 64` — spatial resolution required by the encoder
 - Values in any positive range are fine; the loader normalises by the global max
-
-Each consecutive frame pair within a trajectory becomes one training sample.  With N=50 trajectories of T=200 frames you get 50×199 = 9 950 training pairs.
+- With N=1 800 trajectories of T=200 frames the training set has 1 800×199 = 358 200 frame pairs
 
 #### No real data yet? Use `--dummy`
 
-Both scripts accept `--dummy`, which generates random in-memory tensors and skips disk I/O entirely.  Use it to verify the full pipeline before committing to a real run:
+Both training scripts accept `--dummy`, which generates random in-memory tensors and skips disk I/O entirely:
 
 ```bash
 python scripts/train_single.py --setup pixel --dummy
@@ -191,7 +215,25 @@ python scripts/run_hpo.py      --setup pixel --dummy --n-trials 3 --hpo-epochs 2
 
 > The same workflow applies to both `pixel` and `jepa` setups.  Run it once for each.
 
-#### Step 1 — Smoke-test the pipeline
+#### Step 0 — Prepare the data (once)
+
+Rechunk the raw HDF5 files and validate the pipeline on real data:
+
+```bash
+# 1. Rechunk to per-frame layout (run once after receiving raw files)
+python scripts/rechunk_data.py --input data/lenia_train.h5 --output data/lenia_train_chunked.h5
+python scripts/rechunk_data.py --input data/lenia_val.h5   --output data/lenia_val_chunked.h5
+
+# 2. Validate data integrity and inspect first trajectories
+python scripts/check_data.py
+
+# 3. Run the full pipeline smoke test (DataLoader → forward pass → 7 epochs → rollout)
+python scripts/smoke_test.py
+```
+
+Results land in `experiments/smoke_test_<timestamp>/`.  See `experiments/pipeline_smoke_test.md` for expected output values.
+
+#### Step 1 — Quick environment check (optional, no data needed)
 
 ```bash
 python scripts/train_single.py --setup pixel --dummy
@@ -315,7 +357,7 @@ All paths and hyperparameters live in **`config.yaml`** at the repository root.
 
 | Section | Key | What it controls |
 |---|---|---|
-| `data` | `train_path` / `val_path` | Paths to your `.npy` or `.h5` data files |
+| `data` | `train_path` / `val_path` | Paths to rechunked `.h5` files (default: `data/lenia_train_chunked.h5`, `data/lenia_val_chunked.h5`) |
 | `data` | `batch_size` | Mini-batch size |
 | `data` | `num_workers` | DataLoader worker processes (use `0` with HPO `--n-jobs > 1`) |
 | `model` | `embed_dim` | Encoder output dimensionality |
