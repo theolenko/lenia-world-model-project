@@ -336,6 +336,93 @@ Both setups use the same random seed (42), so the encoder is initialised identic
 
 ---
 
+## Cluster Training (Clara, Uni Leipzig)
+
+### Prerequisites
+
+- SC account with access to the Clara cluster
+- SSH key registered at [portal.sc.uni-leipzig.de](https://portal.sc.uni-leipzig.de)
+- VPN active (openconnect or Cisco AnyConnect)
+
+### Step by step
+
+**One-time setup:**
+
+```bash
+# 1. Transfer code to the cluster
+bash scripts/sync_to_cluster.sh
+
+# 2. Log in
+ssh jv72unec@login01.sc.uni-leipzig.de
+
+# 3. Create the conda environment and install dependencies (on the cluster)
+bash ~/lenia-world-model/scripts/cluster_setup.sh
+
+# 4. Transfer data (several GB — only needed once)
+bash scripts/sync_data_to_cluster.sh
+```
+
+**Per training run:**
+
+```bash
+# Sync code (run locally)
+bash scripts/sync_to_cluster.sh
+
+# Log in and submit job
+ssh jv72unec@login01.sc.uni-leipzig.de
+sbatch ~/lenia-world-model/scripts/train_job.sh
+
+# Check status
+squeue -u jv72unec
+
+# Follow logs live
+tail -f logs_lenia_JOBID.out
+
+# Download results (run locally)
+rsync -avz jv72unec@login01.sc.uni-leipzig.de:~/lenia-results/ ./experiments/cluster/
+```
+
+**Test without transferring anything:**
+
+```bash
+bash scripts/sync_to_cluster.sh --dry-run
+```
+
+### Cluster rules (summary)
+
+| Rule | Details |
+|---|---|
+| No direct execution | Submit all jobs via `sbatch` — never run them on login nodes |
+| No sudo | Install packages via `conda` or `pip` only |
+| No remote editors | No VS Code Remote, no Cursor, etc. |
+| Use lscratch | Write temporary data to `/lscratch/$SLURM_JOB_ID` — deleted after the job ends |
+| Save results | The job script automatically copies results to `~/lenia-results/` |
+
+### Troubleshooting
+
+**GPU not available:**
+```
+AssertionError: CUDA nicht verfuegbar!
+```
+→ Check that `--gres=gpu:1` is set in the job script. Use `squeue -u jv72unec` to confirm the job is running on the `clara` partition.
+
+**Out of memory (OOM):**
+```
+RuntimeError: CUDA out of memory
+```
+→ Reduce `batch_size` in `config_cluster.yaml` (e.g. to 32), or increase `--mem=64G` in the SBATCH header.
+
+**Job stuck in queue:**
+```
+squeue -u jv72unec  →  job stays in PD (pending)
+```
+→ May be caused by resource contention. Check node availability with `sinfo -p clara`. Try reducing `--time`.
+
+**Transfer interrupted:**
+`sync_data_to_cluster.sh` uses `--partial` — just run it again and rsync will resume where it left off.
+
+---
+
 ### HPO options reference
 
 | Flag | Default | Effect |
