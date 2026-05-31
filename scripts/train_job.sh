@@ -11,10 +11,10 @@
 WORK_DIR="/lscratch/$SLURM_JOB_ID"
 PROJECT_DIR="$HOME/lenia-world-model"
 RESULTS_DIR="$HOME/lenia-results/job_$SLURM_JOB_ID"
+PYTHON="$HOME/.conda/envs/lenia-wm/bin/python"
 
 echo "=== STEP 1: Load environment ==="
 module load Anaconda3
-source activate lenia-wm
 
 echo "=== STEP 2: Copy code to lscratch ==="
 mkdir -p "$WORK_DIR"
@@ -27,13 +27,13 @@ rm -rf "$WORK_DIR/data"
 ln -s "$PROJECT_DIR/data" "$WORK_DIR/data"
 
 echo "=== STEP 4: Verify CUDA availability ==="
-python -c "import torch; assert torch.cuda.is_available(), 'CUDA not available!'; print(f'GPU: {torch.cuda.get_device_name(0)}')" || exit 1
+$PYTHON -c "import torch; assert torch.cuda.is_available(), 'CUDA not available!'; print(f'GPU: {torch.cuda.get_device_name(0)}')" || exit 1
 
 echo "=== STEP 5: Set WandB to offline (compute nodes have no internet) ==="
 export WANDB_MODE=offline
 
 echo "=== STEP 6: Start training ==="
-python scripts/train_single.py --setup pixel --config config_cluster.yaml
+$PYTHON scripts/train_single.py --setup pixel --config config_cluster.yaml
 EXIT_CODE=$?
 
 echo "=== STEP 7: Save results (runs even on failure) ==="
