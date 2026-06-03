@@ -1,0 +1,50 @@
+# Cluster config for JEPA training — used by scripts/train_jepa_job.sh
+# Best hyperparameters from HPO run on Clara cluster (job 21998080, 20 trials).
+# Note: learning_rate and ema_momentum differ from HPO output — the HPO lr was
+# found under collapsed conditions (VICReg off) and is not valid for full training.
+
+data:
+  train_path: data/lenia_train_chunked.h5
+  val_path: data/lenia_val_chunked.h5
+  batch_size: 32
+  num_workers: 8
+
+model:
+  embed_dim: 256
+  ema_momentum: 0.996              # high momentum required for stable per-batch EMA updates
+  predictor_hidden_dim: 256
+
+training:
+  num_epochs: 100
+  early_stopping_patience: 15     # stop if val loss stagnates for 15 epochs
+  learning_rate: 5.0e-4           # conservative lr — HPO value was invalid (found under collapse)
+  weight_decay: 2.0311131934245778e-3
+  device: cuda
+  log_interval: 50
+  checkpoint_interval: 10
+
+# JEPA-specific settings — VICReg always on to prevent representation collapse
+jepa:
+  use_variance_reg: true           # prevents all embeddings collapsing to a constant
+  use_covariance_reg: true         # prevents redundant/correlated embedding dimensions
+  var_reg_weight: 0.1              # applied to online encoder output (z_context)
+  cov_reg_weight: 0.04
+
+# HPO settings (used if running run_hpo.py with this config)
+hpo:
+  n_trials: 50
+  hpo_epochs: 20
+  study_name: null
+  storage: null
+  direction: minimize
+  pruner: median
+
+  search_space:
+    embed_dim: [64, 128, 256]
+    learning_rate: [1.0e-4, 1.0e-2]
+    weight_decay: [1.0e-6, 1.0e-2]
+    batch_size: [32, 64, 128]
+    ema_momentum: [0.90, 0.999]
+    predictor_hidden_dim: [128, 256, 512]
+    var_reg_weight: [0.1, 10.0]
+    cov_reg_weight: [1.0e-3, 0.1]

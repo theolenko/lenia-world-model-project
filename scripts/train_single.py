@@ -241,6 +241,7 @@ def train_trial(
     var_reg_weight: float = ov.get("var_reg_weight", jepa_cfg.get("var_reg_weight", 1.0))
     cov_reg_weight: float = ov.get("cov_reg_weight", jepa_cfg.get("cov_reg_weight", 0.04))
     epochs: int = num_epochs if num_epochs is not None else cfg["training"]["num_epochs"]
+    patience: int = cfg["training"].get("early_stopping_patience", 0)
 
     set_seed(seed)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -284,7 +285,12 @@ def train_trial(
     )
 
     print(f"Starting {setup_type} training for {epochs} epochs  →  {log_dir}")
+    if patience > 0 and trial is None:
+        print(f"Early stopping patience: {patience}")
+
     val_loss = 0.0
+    best_val_loss = float("inf")
+    epochs_without_improvement = 0
 
     for epoch in range(epochs):
         t0 = time.time()
@@ -296,6 +302,19 @@ def train_trial(
             f"train={train_loss:.6f}  val={val_loss:.6f}  ({elapsed:.1f}s)"
         )
 
+        # Save best checkpoint when val loss improves
+        if val_loss < best_val_loss:
+            best_val_loss = val_loss
+            epochs_without_improvement = 0
+            trainer._save_checkpoint(epoch + 1, val_loss, tag="best")
+        else:
+            epochs_without_improvement += 1
+
+        # Early stopping — only for full training runs, not HPO trials
+        if patience > 0 and trial is None and epochs_without_improvement >= patience:
+            print(f"  Early stopping at epoch {epoch + 1} (no improvement for {patience} epochs)")
+            break
+
         # Optuna: report intermediate value so the study can prune bad trials early
         if trial is not None:
             trial.report(val_loss, epoch)
@@ -304,7 +323,7 @@ def train_trial(
                 import optuna
                 raise optuna.exceptions.TrialPruned()
 
-    trainer._save_checkpoint(epochs, val_loss)
+    trainer._save_checkpoint(epoch + 1, val_loss, tag="last")
     trainer.writer.close()
     return val_loss
 

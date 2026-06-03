@@ -95,10 +95,16 @@ class JEPAWorldModel(nn.Module):
         )
         for param in self.target_encoder.parameters():
             param.requires_grad = False
+        self.target_encoder.eval()
+
+    def train(self, mode: bool = True) -> "JEPAWorldModel":
+        super().train(mode)
+        self.target_encoder.eval()  # target encoder always in eval — stable BN running stats
+        return self
 
     def forward(
         self, frame_t: torch.Tensor, frame_t_plus_1: torch.Tensor
-    ) -> tuple[torch.Tensor, torch.Tensor]:
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """Compute predicted and target embeddings for a consecutive frame pair.
 
         Args:
@@ -106,14 +112,14 @@ class JEPAWorldModel(nn.Module):
             frame_t_plus_1: Next frame, shape (batch, 1, 64, 64).
 
         Returns:
-            (z_pred, z_target): Both of shape (batch, embed_dim).
-            z_pred has gradients; z_target is detached (stop-gradient).
+            (z_pred, z_target, z_context): All of shape (batch, embed_dim).
+            z_pred and z_context have gradients; z_target is detached (stop-gradient).
         """
-        z_t = self.online_encoder(frame_t)
+        z_context = self.online_encoder(frame_t)
         with torch.no_grad():
             z_target = self.target_encoder(frame_t_plus_1)
-        z_pred = self.predictor(z_t)
-        return z_pred, z_target
+        z_pred = self.predictor(z_context)
+        return z_pred, z_target, z_context
 
     @torch.no_grad()
     def update_target(self) -> None:
