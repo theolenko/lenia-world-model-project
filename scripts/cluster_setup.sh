@@ -18,6 +18,9 @@ else
 fi
 
 echo "=== STEP 3: Install dependencies ==="
+# Install torch 2.4.1 with CUDA 12.1 wheels first — required for V100 (CC 7.0) compatibility.
+# torch>=2.5 dropped CC 7.0 support. Install before requirements.txt so pip does not upgrade it.
+$PIP install torch==2.4.1 --index-url https://download.pytorch.org/whl/cu121
 $PIP install -r ~/lenia-world-model/requirements.txt
 
 echo "=== STEP 4: Create data directory ==="

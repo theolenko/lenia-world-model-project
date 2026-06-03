@@ -1,6 +1,0 @@
-best_val_loss: 0.08555877953767776
-params:
-  batch_size: 64
-  embed_dim: 128
-  learning_rate: 0.0004605268028684528
-  weight_decay: 1.0187669146797731e-05

@@ -1,0 +1,48 @@
+# Cluster config for PIXEL training — used by scripts/train_pixel_job.sh
+# Best hyperparameters from HPO run on Clara cluster (job 21994101, 20 trials).
+
+data:
+  train_path: data/lenia_train_chunked.h5
+  val_path: data/lenia_val_chunked.h5
+  batch_size: 32
+  num_workers: 8
+
+model:
+  embed_dim: 256
+  ema_momentum: 0.9214333979615823   # unused for pixel setup
+  predictor_hidden_dim: 256          # unused for pixel setup
+
+training:
+  num_epochs: 100
+  early_stopping_patience: 15        # stop if val loss stagnates for 15 epochs
+  learning_rate: 1.751010114760446e-3
+  weight_decay: 8.635675344969268e-6
+  device: cuda
+  log_interval: 50
+  checkpoint_interval: 10
+
+# JEPA-specific settings (ignored for pixel setup, kept for reference)
+jepa:
+  use_variance_reg: true
+  use_covariance_reg: true
+  var_reg_weight: 0.10621002476817312
+  cov_reg_weight: 0.0938500234185635
+
+# HPO settings (used if running run_hpo.py with this config)
+hpo:
+  n_trials: 50
+  hpo_epochs: 20
+  study_name: null
+  storage: null
+  direction: minimize
+  pruner: median
+
+  search_space:
+    embed_dim: [64, 128, 256]
+    learning_rate: [1.0e-4, 1.0e-2]
+    weight_decay: [1.0e-6, 1.0e-2]
+    batch_size: [32, 64, 128]
+    ema_momentum: [0.90, 0.999]
+    predictor_hidden_dim: [128, 256, 512]
+    var_reg_weight: [0.1, 10.0]
+    cov_reg_weight: [1.0e-3, 0.1]

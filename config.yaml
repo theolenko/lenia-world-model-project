@@ -1,42 +1,48 @@
+# Local development config — for running experiments on your own machine (CPU or GPU).
+# Use config_cluster_pixel.yaml / config_cluster_jepa.yaml for cluster training.
+
 data:
   train_path: data/lenia_train_chunked.h5
   val_path: data/lenia_val_chunked.h5
   batch_size: 64
-  num_workers: 4
+  num_workers: 4                 # reduce to 0 when using HPO --n-jobs > 1
 
 model:
   embed_dim: 128
-  ema_momentum: 0.99
-  predictor_hidden_dim: 256
+  ema_momentum: 0.99             # EMA decay for JEPA target encoder (per-batch update)
+  predictor_hidden_dim: 256      # JEPA predictor MLP hidden width
 
 training:
   num_epochs: 100
+  early_stopping_patience: 15   # stop if val loss doesn't improve for N epochs (0 = disabled)
   learning_rate: 1.0e-3
   weight_decay: 0.0
-  log_interval: 50    # batches
-  checkpoint_interval: 10  # epochs
+  log_interval: 50               # log train loss every N batches
+  checkpoint_interval: 10        # save checkpoint every N epochs
 
+# JEPA-specific settings (ignored for pixel setup)
 jepa:
-  use_variance_reg: false
-  use_covariance_reg: false
-  var_reg_weight: 1.0
-  cov_reg_weight: 0.04
+  use_variance_reg: true         # VICReg variance term — prevents representation collapse
+  use_covariance_reg: true       # VICReg covariance term — prevents redundant dimensions
+  var_reg_weight: 0.1            # weight for variance regularisation loss
+  cov_reg_weight: 0.04           # weight for covariance regularisation loss
 
+# Hyperparameter optimisation settings (used by run_hpo.py)
 hpo:
   n_trials: 50
-  hpo_epochs: 20          # epochs per trial (much shorter than full training)
-  study_name: null         # defaults to "lenia_{setup}_hpo" if null
-  storage: null            # e.g. "sqlite:///experiments/hpo.db" for persistence
+  hpo_epochs: 20                 # epochs per trial (much shorter than full training)
+  study_name: null               # defaults to "lenia_{setup}_hpo" if null
+  storage: null                  # e.g. "sqlite:///experiments/hpo.db" for persistence
   direction: minimize
-  pruner: median           # "median" or "none"
+  pruner: median                 # "median" or "none"
 
   search_space:
-    # Shared
+    # Shared hyperparameters (pixel + JEPA)
     embed_dim: [64, 128, 256]
     learning_rate: [1.0e-4, 1.0e-2]
     weight_decay: [1.0e-6, 1.0e-2]
     batch_size: [32, 64, 128]
-    # JEPA-only
+    # JEPA-only hyperparameters
     ema_momentum: [0.90, 0.999]
     predictor_hidden_dim: [128, 256, 512]
     var_reg_weight: [0.1, 10.0]

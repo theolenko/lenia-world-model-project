@@ -1,7 +1,7 @@
 import os
 import time
 from pathlib import Path
-from typing import Union
+from typing import Optional, Union
 
 import torch
 import torch.nn as nn
@@ -83,13 +83,13 @@ class Trainer:
             loss = pixel_prediction_loss(predicted_frame, frame_t_plus_1)
 
         else:  # jepa
-            z_pred, z_target = self.model(frame_t, frame_t_plus_1)
+            z_pred, z_target, z_context = self.model(frame_t, frame_t_plus_1)
             loss = jepa_loss(z_pred, z_target)
 
             if self.use_variance_reg:
-                loss = loss + self.var_reg_weight * variance_regularization(z_pred)
+                loss = loss + self.var_reg_weight * variance_regularization(z_context)
             if self.use_covariance_reg:
-                loss = loss + self.cov_reg_weight * covariance_regularization(z_pred)
+                loss = loss + self.cov_reg_weight * covariance_regularization(z_context)
 
         return loss
 
@@ -110,6 +110,7 @@ class Trainer:
 
             self.optimizer.zero_grad()
             loss.backward()
+            nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
             self.optimizer.step()
 
             if self.setup_type == "jepa":
@@ -148,7 +149,7 @@ class Trainer:
         self.writer.add_scalar("val/loss_epoch", mean_loss, epoch)
         return mean_loss
 
-    def _save_checkpoint(self, epoch: int, val_loss: float) -> None:
+    def _save_checkpoint(self, epoch: int, val_loss: float, tag: Optional[str] = None) -> None:
         """Save model and optimizer state to disk."""
         checkpoint = {
             "epoch": epoch,
@@ -156,8 +157,8 @@ class Trainer:
             "optimizer_state_dict": self.optimizer.state_dict(),
             "val_loss": val_loss,
         }
-        path = self.log_dir / f"checkpoint_epoch_{epoch:04d}.pt"
-        torch.save(checkpoint, path)
+        name = f"checkpoint_{tag}.pt" if tag else f"checkpoint_epoch_{epoch:04d}.pt"
+        torch.save(checkpoint, self.log_dir / name)
 
     def train(self, num_epochs: int) -> None:
         """Run the full training loop.

@@ -88,23 +88,18 @@ def _suggest_hyperparams(trial: optuna.Trial, setup_type: str, ss: dict) -> dict
             "predictor_hidden_dim", ss.get("predictor_hidden_dim", [128, 256, 512])
         )
 
-        # Variance regularisation (anti-collapse)
-        overrides["use_variance_reg"] = trial.suggest_categorical(
-            "use_variance_reg", [True, False]
+        # Variance regularisation (anti-collapse).
+        # Always on for JEPA — collapse produces artificially low loss that fools Optuna.
+        overrides["use_variance_reg"] = True
+        overrides["var_reg_weight"] = trial.suggest_float(
+            "var_reg_weight", *ss.get("var_reg_weight", [0.1, 10.0]), log=True
         )
-        if overrides["use_variance_reg"]:
-            overrides["var_reg_weight"] = trial.suggest_float(
-                "var_reg_weight", *ss.get("var_reg_weight", [0.1, 10.0]), log=True
-            )
 
-        # Covariance regularisation (anti-redundancy)
-        overrides["use_covariance_reg"] = trial.suggest_categorical(
-            "use_covariance_reg", [True, False]
+        # Covariance regularisation (anti-redundancy). Always on for same reason.
+        overrides["use_covariance_reg"] = True
+        overrides["cov_reg_weight"] = trial.suggest_float(
+            "cov_reg_weight", *ss.get("cov_reg_weight", [1e-3, 0.1]), log=True
         )
-        if overrides["use_covariance_reg"]:
-            overrides["cov_reg_weight"] = trial.suggest_float(
-                "cov_reg_weight", *ss.get("cov_reg_weight", [1e-3, 0.1]), log=True
-            )
 
     return overrides
 
