@@ -242,3 +242,7 @@ venv/
 *.egg-info/
 dist/
 build/
+
+# Generated datasets
+data_gen/*.h5
+output/
