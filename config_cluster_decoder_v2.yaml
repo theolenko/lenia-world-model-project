@@ -1,0 +1,23 @@
+# Cluster config — JEPA reconstruction decoder training on v2 data
+#
+# The JEPA encoder is loaded from jepa_checkpoint (frozen).
+# Only LeniaDecoder is trained to reconstruct frame_t from encoder(frame_t).
+# embed_dim must match the JEPA checkpoint (256).
+
+data:
+  train_path: data/v2_lenia_train_chunked.h5
+  val_path:   data/v2_lenia_val_chunked.h5
+  batch_size: 64
+  num_workers: 8
+
+model:
+  embed_dim: 256                             # must match JEPA encoder
+
+training:
+  num_epochs: 50
+  early_stopping_patience: 10
+  learning_rate: 1.0e-3
+  weight_decay: 1.0e-5
+  use_lr_schedule: true
+  log_interval: 50
+  checkpoint_interval: 10
