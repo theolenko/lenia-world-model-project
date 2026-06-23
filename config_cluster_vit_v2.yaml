@@ -1,0 +1,48 @@
+# Cluster config — Pixel-ViT training on v2 data
+# ViT: patch_size=8 → 64 patches per frame, 6 transformer layers, 8 heads.
+# Run HPO first to find good lr/embed_dim for this architecture.
+
+data:
+  train_path: data/v2_lenia_train_chunked.h5
+  val_path:   data/v2_lenia_val_chunked.h5
+  batch_size: 32
+  num_workers: 8
+
+model:
+  encoder_type: vit                          # ViTEncoder(pool=True): patch embed + transformer
+  embed_dim: 256                             # HPO best (must be divisible by num_heads=8)
+  ema_momentum: 0.99                         # unused for pixel setup
+  predictor_hidden_dim: 256                  # unused for pixel setup
+
+training:
+  num_epochs: 100
+  early_stopping_patience: 15
+  learning_rate: 6.440e-5                    # HPO best (trial #20, val_loss=0.02242)
+  weight_decay: 4.032e-5
+  use_lr_schedule: true
+  log_interval: 50
+  checkpoint_interval: 10
+
+jepa:
+  use_variance_reg: true
+  use_covariance_reg: true
+  var_reg_weight: 0.1
+  cov_reg_weight: 0.04
+
+hpo:
+  n_trials: 20
+  hpo_epochs: 10
+  study_name: null
+  storage: null
+  direction: minimize
+  pruner: median
+
+  search_space:
+    embed_dim: [64, 128, 256]              # all divisible by default num_heads=8
+    learning_rate: [1.0e-5, 1.0e-3]       # ViT needs lower lr range than CNN
+    weight_decay: [1.0e-5, 1.0e-2]
+    batch_size: [32, 64, 128]
+    ema_momentum: [0.90, 0.999]
+    predictor_hidden_dim: [128, 256, 512]
+    var_reg_weight: [0.1, 10.0]
+    cov_reg_weight: [1.0e-3, 0.1]
