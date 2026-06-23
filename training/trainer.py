@@ -51,6 +51,7 @@ class Trainer:
         log_dir: str = "experiments/run",
         log_interval: int = 50,
         checkpoint_interval: int = 10,
+        scheduler: Optional[torch.optim.lr_scheduler.LRScheduler] = None,
     ) -> None:
         assert setup_type in ("pixel", "jepa"), "setup_type must be 'pixel' or 'jepa'"
         self.model = model.to(device)
@@ -65,6 +66,7 @@ class Trainer:
         self.cov_reg_weight = cov_reg_weight
         self.log_interval = log_interval
         self.checkpoint_interval = checkpoint_interval
+        self.scheduler = scheduler
 
         self.log_dir = Path(log_dir)
         self.log_dir.mkdir(parents=True, exist_ok=True)

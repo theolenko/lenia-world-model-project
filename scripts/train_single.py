@@ -231,6 +231,7 @@ def train_trial(
     predictor_hidden_dim: int = ov.get(
         "predictor_hidden_dim", cfg["model"]["predictor_hidden_dim"]
     )
+    encoder_type: str = ov.get("encoder_type", cfg["model"].get("encoder_type", "cnn"))
     jepa_cfg = cfg.get("jepa", {})
     use_variance_reg: bool = ov.get(
         "use_variance_reg", jepa_cfg.get("use_variance_reg", False)
@@ -249,12 +250,13 @@ def train_trial(
     train_loader, val_loader = build_dataloaders(cfg, batch_size=batch_size, dummy=dummy)
 
     if setup_type == "pixel":
-        model = PixelWorldModel(embed_dim=embed_dim)
+        model = PixelWorldModel(embed_dim=embed_dim, encoder_type=encoder_type)
     else:
         model = JEPAWorldModel(
             embed_dim=embed_dim,
             ema_momentum=ema_momentum,
             predictor_hidden_dim=predictor_hidden_dim,
+            encoder_type=encoder_type,
         )
 
     num_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
@@ -262,6 +264,12 @@ def train_trial(
 
     optimizer = torch.optim.Adam(
         model.parameters(), lr=learning_rate, weight_decay=weight_decay
+    )
+
+    use_lr_schedule: bool = cfg["training"].get("use_lr_schedule", True)
+    scheduler = (
+        torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs)
+        if use_lr_schedule else None
     )
 
     if log_dir is None:
@@ -282,6 +290,7 @@ def train_trial(
         log_dir=log_dir,
         log_interval=cfg["training"]["log_interval"],
         checkpoint_interval=cfg["training"]["checkpoint_interval"],
+        scheduler=scheduler,
     )
 
     print(f"Starting {setup_type} training for {epochs} epochs  →  {log_dir}")
@@ -297,6 +306,11 @@ def train_trial(
         train_loss = trainer.train_epoch(epoch)
         val_loss = trainer.validate(epoch)
         elapsed = time.time() - t0
+
+        if scheduler is not None:
+            scheduler.step()
+            trainer.writer.add_scalar("train/lr", scheduler.get_last_lr()[0], epoch)
+
         print(
             f"  Epoch [{epoch + 1}/{epochs}]  "
             f"train={train_loss:.6f}  val={val_loss:.6f}  ({elapsed:.1f}s)"

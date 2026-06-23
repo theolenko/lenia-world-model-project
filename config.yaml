@@ -17,6 +17,7 @@ training:
   early_stopping_patience: 15   # stop if val loss doesn't improve for N epochs (0 = disabled)
   learning_rate: 1.0e-3
   weight_decay: 0.0
+  use_lr_schedule: true
   log_interval: 50               # log train loss every N batches
   checkpoint_interval: 10        # save checkpoint every N epochs
 
