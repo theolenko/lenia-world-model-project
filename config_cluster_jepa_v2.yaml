@@ -1,0 +1,54 @@
+# Cluster config — JEPA-CNN training on v2 data
+#
+# Key fixes vs v1 (do not revert these):
+#   ema_momentum: must be high (~0.996) — update_target() is called per-batch,
+#                 not per-epoch. 0.9214^300 ≈ 0 causes immediate collapse.
+#   var_reg_weight: 0.1 — 1.0 dominated the loss and prevented prediction learning.
+#   VICReg applied to z_context only — z_target is inside torch.no_grad(),
+#                 so gradients on it are zero (dead weight).
+#   learning_rate: conservative — v1 HPO lr was found under collapsed conditions.
+
+data:
+  train_path: data/v2_lenia_train_chunked.h5
+  val_path:   data/v2_lenia_val_chunked.h5
+  batch_size: 64
+  num_workers: 8
+
+model:
+  encoder_type: cnn                          # LeniaEncoder
+  embed_dim: 256                             # HPO best
+  ema_momentum: 0.9926                       # HPO best (per-batch EMA)
+  predictor_hidden_dim: 512                  # HPO best
+
+training:
+  num_epochs: 100
+  early_stopping_patience: 15
+  learning_rate: 3.856e-4                    # HPO best (trial #12, val_loss=0.04926)
+  weight_decay: 2.555e-4
+  use_lr_schedule: true
+  log_interval: 50
+  checkpoint_interval: 10
+
+jepa:
+  use_variance_reg: true                     # VICReg variance — prevents collapse
+  use_covariance_reg: true                   # VICReg covariance — prevents redundancy
+  var_reg_weight: 0.0503                     # HPO best
+  cov_reg_weight: 0.0288                     # HPO best
+
+hpo:
+  n_trials: 20
+  hpo_epochs: 20
+  study_name: null
+  storage: null
+  direction: minimize
+  pruner: median
+
+  search_space:
+    embed_dim: [64, 128, 256]
+    learning_rate: [1.0e-4, 5.0e-3]         # tighter range — exclude high lrs that cause collapse
+    weight_decay: [1.0e-6, 1.0e-2]
+    batch_size: [32, 64, 128]
+    ema_momentum: [0.990, 0.999]             # per-batch range — must stay close to 1.0
+    predictor_hidden_dim: [128, 256, 512]
+    var_reg_weight: [0.05, 1.0]
+    cov_reg_weight: [1.0e-3, 0.1]
