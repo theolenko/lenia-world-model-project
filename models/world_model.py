@@ -3,8 +3,8 @@ import torch
 import torch.nn as nn
 
 from models.encoder import LeniaEncoder, SimpleCNNEncoder, ViTEncoder
-from models.decoder import LeniaDecoder
-from models.predictor import LeniaPredictor
+from models.decoder import LeniaDecoder, PatchDecoder
+from models.predictor import LeniaPredictor, PatchPredictor
 
 _ENCODER_REGISTRY = {
     "cnn": LeniaEncoder,
@@ -140,4 +140,80 @@ class JEPAWorldModel(nn.Module):
         Returns:
             Tensor of shape (batch, embed_dim).
         """
+        return self.online_encoder(frame)
+
+
+class PatchJEPAWorldModel(nn.Module):
+    """Patch-level JEPA world model using ViT encoder (pool=False).
+
+    Encodes frames as patch sequences (B, N_patches, embed_dim), preserving
+    spatial structure. The predictor maps patch embeddings of frame_t to
+    predicted patch embeddings of frame_t+1. A PatchDecoder can then
+    reconstruct pixel-space predictions from the patch embeddings.
+
+    Args:
+        embed_dim: Patch embedding dimensionality. Must be divisible by num_heads. Default: 256.
+        ema_momentum: EMA decay for target encoder (per-batch). Default: 0.996.
+        predictor_hidden_dim: Hidden width of patch MLP predictor. Default: 512.
+        num_heads: ViT attention heads. embed_dim % num_heads == 0. Default: 8.
+        num_layers: ViT transformer layers. Default: 6.
+    """
+
+    def __init__(
+        self,
+        embed_dim: int = 256,
+        ema_momentum: float = 0.996,
+        predictor_hidden_dim: int = 512,
+        num_heads: int = 8,
+        num_layers: int = 6,
+    ) -> None:
+        super().__init__()
+        self.ema_momentum = ema_momentum
+
+        self.online_encoder = ViTEncoder(
+            embed_dim=embed_dim, pool=False,
+            num_heads=num_heads, num_layers=num_layers,
+        )
+        self.target_encoder = ViTEncoder(
+            embed_dim=embed_dim, pool=False,
+            num_heads=num_heads, num_layers=num_layers,
+        )
+        self.predictor = PatchPredictor(embed_dim=embed_dim, hidden_dim=predictor_hidden_dim)
+
+        self.target_encoder.load_state_dict(
+            copy.deepcopy(self.online_encoder.state_dict())
+        )
+        for param in self.target_encoder.parameters():
+            param.requires_grad = False
+        self.target_encoder.eval()
+
+    def train(self, mode: bool = True) -> "PatchJEPAWorldModel":
+        super().train(mode)
+        self.target_encoder.eval()
+        return self
+
+    def forward(
+        self, frame_t: torch.Tensor, frame_t_plus_1: torch.Tensor
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        """
+        Returns:
+            (z_pred, z_target, z_context): All shape (batch, N_patches, embed_dim).
+        """
+        z_context = self.online_encoder(frame_t)          # (B, N, D)
+        with torch.no_grad():
+            z_target = self.target_encoder(frame_t_plus_1)  # (B, N, D)
+        z_pred = self.predictor(z_context)                 # (B, N, D)
+        return z_pred, z_target, z_context
+
+    @torch.no_grad()
+    def update_target(self) -> None:
+        for online_p, target_p in zip(
+            self.online_encoder.parameters(), self.target_encoder.parameters()
+        ):
+            target_p.data.mul_(self.ema_momentum).add_(
+                online_p.data, alpha=1.0 - self.ema_momentum
+            )
+
+    def encode(self, frame: torch.Tensor) -> torch.Tensor:
+        """Return patch embeddings (B, N_patches, embed_dim) for evaluation."""
         return self.online_encoder(frame)
