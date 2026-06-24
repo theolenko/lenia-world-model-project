@@ -22,7 +22,7 @@ from torch.utils.data import DataLoader, Dataset, TensorDataset
 # Make the project root importable regardless of working directory
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from models.world_model import JEPAWorldModel, PixelWorldModel
+from models.world_model import JEPAWorldModel, PixelWorldModel, PatchJEPAWorldModel
 from training.trainer import Trainer
 
 SEED = 42
@@ -251,12 +251,18 @@ def train_trial(
 
     if setup_type == "pixel":
         model = PixelWorldModel(embed_dim=embed_dim, encoder_type=encoder_type)
-    else:
+    elif setup_type == "jepa":
         model = JEPAWorldModel(
             embed_dim=embed_dim,
             ema_momentum=ema_momentum,
             predictor_hidden_dim=predictor_hidden_dim,
             encoder_type=encoder_type,
+        )
+    elif setup_type == "patch_jepa":
+        model = PatchJEPAWorldModel(
+            embed_dim=embed_dim,
+            ema_momentum=ema_momentum,
+            predictor_hidden_dim=predictor_hidden_dim,
         )
 
     num_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
@@ -346,8 +352,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--setup",
         required=True,
-        choices=["pixel", "jepa"],
-        help="Training paradigm: 'pixel' for pixel-prediction, 'jepa' for JEPA.",
+        choices=["pixel", "jepa", "patch_jepa"],
+        help="Training paradigm: 'pixel' for pixel-prediction, 'jepa' for JEPA, 'patch_jepa' for patch-level JEPA.",
     )
     parser.add_argument(
         "--config",
