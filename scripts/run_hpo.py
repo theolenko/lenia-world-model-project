@@ -80,7 +80,7 @@ def _suggest_hyperparams(trial: optuna.Trial, setup_type: str, ss: dict) -> dict
     )
 
     # ── JEPA-only ─────────────────────────────────────────────────────────────
-    if setup_type == "jepa":
+    if setup_type in ("jepa", "patch_jepa"):
         overrides["ema_momentum"] = trial.suggest_float(
             "ema_momentum", *ss.get("ema_momentum", [0.90, 0.999])
         )
@@ -147,7 +147,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--setup",
         required=True,
-        choices=["pixel", "jepa"],
+        choices=["pixel", "jepa", "patch_jepa"],
         help="Training paradigm to optimise.",
     )
     parser.add_argument(
