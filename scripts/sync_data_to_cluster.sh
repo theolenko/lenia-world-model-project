@@ -10,6 +10,8 @@ LOCAL_DATA_DIR="data/"
 FILES=(
     "lenia_train_chunked.h5"
     "lenia_val_chunked.h5"
+    "v2_lenia_train_chunked.h5"
+    "v2_lenia_val_chunked.h5"
 )
 
 echo "=== Data transfer to cluster ==="

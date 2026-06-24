@@ -8,7 +8,7 @@ import torch.nn as nn
 from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
 
-from models.world_model import PixelWorldModel, JEPAWorldModel
+from models.world_model import PixelWorldModel, JEPAWorldModel, PatchJEPAWorldModel
 from training.losses import (
     pixel_prediction_loss,
     jepa_loss,
@@ -51,8 +51,9 @@ class Trainer:
         log_dir: str = "experiments/run",
         log_interval: int = 50,
         checkpoint_interval: int = 10,
+        scheduler: Optional[torch.optim.lr_scheduler.LRScheduler] = None,
     ) -> None:
-        assert setup_type in ("pixel", "jepa"), "setup_type must be 'pixel' or 'jepa'"
+        assert setup_type in ("pixel", "jepa", "patch_jepa"), "setup_type must be 'pixel', 'jepa', or 'patch_jepa'"
         self.model = model.to(device)
         self.train_loader = train_loader
         self.val_loader = val_loader
@@ -65,6 +66,7 @@ class Trainer:
         self.cov_reg_weight = cov_reg_weight
         self.log_interval = log_interval
         self.checkpoint_interval = checkpoint_interval
+        self.scheduler = scheduler
 
         self.log_dir = Path(log_dir)
         self.log_dir.mkdir(parents=True, exist_ok=True)
@@ -82,7 +84,7 @@ class Trainer:
             predicted_frame = self.model(frame_t)
             loss = pixel_prediction_loss(predicted_frame, frame_t_plus_1)
 
-        else:  # jepa
+        elif self.setup_type == "jepa":
             z_pred, z_target, z_context = self.model(frame_t, frame_t_plus_1)
             loss = jepa_loss(z_pred, z_target)
 
@@ -90,6 +92,17 @@ class Trainer:
                 loss = loss + self.var_reg_weight * variance_regularization(z_context)
             if self.use_covariance_reg:
                 loss = loss + self.cov_reg_weight * covariance_regularization(z_context)
+
+        else:  # patch_jepa — z_context/z_pred/z_target are (B, N_patches, D)
+            z_pred, z_target, z_context = self.model(frame_t, frame_t_plus_1)
+            loss = jepa_loss(z_pred, z_target)
+            if self.use_variance_reg or self.use_covariance_reg:
+                # flatten patches to treat each (batch, patch) pair as an independent sample
+                z_flat = z_context.flatten(0, 1)  # (B*N, D)
+                if self.use_variance_reg:
+                    loss = loss + self.var_reg_weight * variance_regularization(z_flat)
+                if self.use_covariance_reg:
+                    loss = loss + self.cov_reg_weight * covariance_regularization(z_flat)
 
         return loss
 
@@ -113,7 +126,7 @@ class Trainer:
             nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
             self.optimizer.step()
 
-            if self.setup_type == "jepa":
+            if self.setup_type in ("jepa", "patch_jepa"):
                 self.model.update_target()
 
             total_loss += loss.item()

@@ -1,0 +1,48 @@
+# Cluster config — Pixel-CNN training on v2 data
+# Run HPO first, then copy best params here before full training.
+# Based on v1 HPO best params as starting point.
+
+data:
+  train_path: data/v2_lenia_train_chunked.h5
+  val_path:   data/v2_lenia_val_chunked.h5
+  batch_size: 64
+  num_workers: 8
+
+model:
+  encoder_type: cnn                          # LeniaEncoder (4× stride-2 conv + projection)
+  embed_dim: 128                             # HPO best
+  ema_momentum: 0.9214                       # unused for pixel setup
+  predictor_hidden_dim: 256                  # unused for pixel setup
+
+training:
+  num_epochs: 100
+  early_stopping_patience: 15
+  learning_rate: 5.992e-4                    # HPO best (trial #17, val_loss=0.01897)
+  weight_decay: 3.641e-6
+  use_lr_schedule: true
+  log_interval: 50
+  checkpoint_interval: 10
+
+jepa:
+  use_variance_reg: true
+  use_covariance_reg: true
+  var_reg_weight: 0.106
+  cov_reg_weight: 0.094
+
+hpo:
+  n_trials: 20
+  hpo_epochs: 20
+  study_name: null
+  storage: null
+  direction: minimize
+  pruner: median
+
+  search_space:
+    embed_dim: [64, 128, 256]
+    learning_rate: [1.0e-4, 1.0e-2]
+    weight_decay: [1.0e-6, 1.0e-2]
+    batch_size: [32, 64, 128]
+    ema_momentum: [0.90, 0.999]
+    predictor_hidden_dim: [128, 256, 512]
+    var_reg_weight: [0.1, 10.0]
+    cov_reg_weight: [1.0e-3, 0.1]

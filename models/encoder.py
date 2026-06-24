@@ -42,8 +42,10 @@ class LeniaEncoder(nn.Module):
         self.flatten = nn.Flatten()
         self.projection = nn.Linear(256, embed_dim)
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        x = self.conv_blocks(x)
+    def forward(self, x: torch.Tensor, return_spatial: bool = False) -> torch.Tensor:
+        x = self.conv_blocks(x)          # (B, 256, 4, 4)
+        if return_spatial:
+            return x                     # spatial feature map — no GAP, no projection
         x = self.pool(x)
         x = self.flatten(x)
         x = self.projection(x)
