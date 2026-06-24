@@ -1,11 +1,13 @@
-"""Train a reconstruction decoder on top of a frozen JEPA encoder.
+"""Train a spatial reconstruction decoder on top of a frozen JEPA encoder.
 
-The JEPA encoder is loaded from a saved checkpoint and kept frozen throughout.
-Only the LeniaDecoder is trained to reconstruct frame_t from encoder(frame_t).
+Uses the pre-GAP spatial feature map (B, 256, 4, 4) from LeniaEncoder instead
+of the pooled flat embedding. This preserves spatial structure that
+AdaptiveAvgPool discards, enabling proper frame reconstruction.
 
-After training, the decoder can be used to decode JEPA's latent predictions
-(z_pred = predictor(encoder(frame_t))) back into pixel space — enabling direct
-visual comparison with Pixel-CNN and Pixel-ViT.
+Pipeline:
+    frame_t → encoder.conv_blocks → (B,256,4,4) → SpatialLeniaDecoder → frame_t
+
+The encoder's GAP + projection layers are bypassed entirely for this task.
 
 Usage:
     python scripts/train_decoder.py --jepa-checkpoint path/to/checkpoint_best.pt
@@ -29,7 +31,7 @@ from torch.utils.tensorboard import SummaryWriter
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from models.decoder import LeniaDecoder
+from models.decoder import SpatialLeniaDecoder
 from models.world_model import JEPAWorldModel
 from scripts.train_single import build_dataloaders
 
@@ -89,9 +91,11 @@ def train_decoder(
     print(f"Loading frozen JEPA encoder from: {jepa_ckpt_path}")
     encoder = load_frozen_encoder(jepa_ckpt_path, embed_dim, device)
 
-    decoder = LeniaDecoder(embed_dim=embed_dim).to(device)
+    # SpatialLeniaDecoder takes (B, 256, 4, 4) pre-GAP features directly,
+    # preserving spatial structure that the flat embedding discards.
+    decoder = SpatialLeniaDecoder().to(device)
     num_params = sum(p.numel() for p in decoder.parameters() if p.requires_grad)
-    print(f"Decoder trainable params: {num_params:,}")
+    print(f"SpatialLeniaDecoder trainable params: {num_params:,}")
 
     optimizer = torch.optim.Adam(decoder.parameters(), lr=lr, weight_decay=weight_decay)
     scheduler = (
@@ -128,9 +132,9 @@ def train_decoder(
             frame_t = frame_t.to(device)
 
             with torch.no_grad():
-                z = encoder(frame_t)
+                spatial = encoder(frame_t, return_spatial=True)
 
-            recon = decoder(z)
+            recon = decoder(spatial)
             loss = criterion(recon, frame_t)
 
             optimizer.zero_grad()
@@ -152,8 +156,8 @@ def train_decoder(
         with torch.no_grad():
             for frame_t, _ in val_loader:
                 frame_t = frame_t.to(device)
-                z = encoder(frame_t)
-                recon = decoder(z)
+                spatial = encoder(frame_t, return_spatial=True)
+                recon = decoder(spatial)
                 total_val += criterion(recon, frame_t).item()
 
         val_loss = total_val / len(val_loader)
