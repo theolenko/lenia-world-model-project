@@ -6,7 +6,7 @@
 #SBATCH --gres=gpu:1
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=32G
-#SBATCH --time=12:00:00
+#SBATCH --time=24:00:00
 
 WORK_DIR="/lscratch/$SLURM_JOB_ID"
 PROJECT_DIR="$HOME/lenia-world-model"
