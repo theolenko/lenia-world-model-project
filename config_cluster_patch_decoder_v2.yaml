@@ -1,0 +1,23 @@
+# Cluster config — PatchDecoder training on top of frozen PatchJEPAWorldModel
+#
+# Pipeline: frame_t → frozen ViTEncoder(pool=False) → (B, 64, embed_dim)
+#           → PatchDecoder → frame_t (reconstructed)
+#
+# embed_dim must match the patch_jepa checkpoint (HPO best: 128).
+
+data:
+  train_path: data/v2_lenia_train_chunked.h5
+  val_path:   data/v2_lenia_val_chunked.h5
+  batch_size: 32
+  num_workers: 8
+
+model:
+  embed_dim: 128                             # must match patch_jepa checkpoint
+
+training:
+  num_epochs: 50
+  early_stopping_patience: 10
+  learning_rate: 1.0e-3
+  weight_decay: 1.0e-5
+  use_lr_schedule: true
+  log_interval: 50
