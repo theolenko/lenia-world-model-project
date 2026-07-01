@@ -133,10 +133,13 @@ Same JEPA principle but with **ViTEncoder(pool=False)**, keeping the 64 patch em
 - **Target encoder** (EMA) encodes `frame_t+1` → `(B, 64, embed_dim)` (no grad)
 - Loss: MSE over all patch positions + VICReg on flattened `(B×64, embed_dim)`
 
-After JEPA training, a **PatchDecoder** is trained separately on the frozen encoder:
+After JEPA training, a **PatchDecoder** is trained separately on a mix of encoder and predictor outputs:
 ```
-frame_t → frozen ViTEncoder → (B, 64, D) → PatchDecoder → frame_t (reconstructed)
+frame_t → frozen ViTEncoder → z_enc  ─────────────────────────────┐
+                                                                   ↓  PatchDecoder → frame_t
+frame_t → frozen ViTEncoder → z_enc → frozen Predictor → z_pred ──┘
 ```
+Training on **both** `z_enc` and `predictor(z_enc)` closes the train/inference distribution gap: at inference the decoder always receives predictor outputs, so training exclusively on clean encoder embeddings causes quality loss.
 
 This enables true autoregressive rollout at inference:
 ```
@@ -355,9 +358,19 @@ ssh <unilogin>@login01.sc.uni-leipzig.de "cd ~/lenia-world-model && \
 | Pixel-ViT    | ~0.022         | 100    | Pixel MSE — ViT encoder, same task         |
 | JEPA-CNN     | ~0.049         | 100    | Embedding MSE + VICReg (not comparable)    |
 | Patch-JEPA   | 0.01340        | 100    | Embedding MSE over 64 patches + VICReg     |
-| PatchDecoder | 0.000102       | 50     | Pixel MSE — reconstruction from frozen enc |
+| PatchDecoder | —              | 100    | Trained on 50% encoder + 50% predictor embs — see note |
 
-> Note: JEPA and Pixel model losses are measured in different spaces (embedding vs pixel MSE) and are **not directly comparable**. The PatchDecoder val_loss represents pixel reconstruction quality of the frozen encoder, not temporal prediction.
+> Note: JEPA and Pixel model losses are measured in different spaces (embedding vs pixel MSE) and are **not directly comparable**. PatchDecoder is trained on a 50/50 mix of encoder and predictor outputs to match the inference distribution.
+
+### Pixel-space evaluation (latest, job 24907728)
+
+| Model | One-step MSE ↓ | PSNR ↑ | SSIM ↑ | Rollout horizon |
+|-------|---------------|--------|--------|----------------|
+| Pixel-CNN | 0.0084 | 20.9 dB | **0.917** | > step 30 |
+| Pixel-ViT | 0.0085 | 20.9 dB | 0.868 | step 13 |
+| Patch-JEPA | 0.0306 | 15.2 dB | 0.378 | step 1 |
+
+Identity baseline (no-change): MSE ≈ 0.00045, step-30 rollout ≈ 0.075.
 
 ### Generated visualizations (`experiments/plots/`)
 
@@ -401,7 +414,14 @@ Detailed findings: `evaluation/README.md`
 
 ### Intervention analysis (`interventions/run_all_interventions.py`)
 
-Causal probing: the model rolls `t_star` steps autoregressively from `traj[0]`, then the last predicted frame is perturbed. Both the model and the real Lenia simulator continue from the perturbed frame. MSE between model and simulator is measured per step.
+Causal probing of whether each model correctly tracks Lenia physics after a state perturbation.
+
+**Protocol:**
+1. GT: real Lenia runs `t_star` steps from `traj[0]`, intervention applied to GT's own frame → Lenia continues
+2. Each model: autoregressively rolls `t_star` steps, intervention applied to **model's own predicted frame** (same random parameters as GT) → model continues
+3. MSE between model prediction and **shared Lenia GT** per step, averaged over 5 trajectories
+
+All models are compared against the same ground truth, so numbers are directly comparable across models.
 
 | Intervention | What it tests |
 |---|---|
@@ -415,17 +435,16 @@ Causal probing: the model rolls `t_star` steps autoregressively from `traj[0]`, 
 python interventions/run_all_interventions.py --n-traj 5 --t-star 10 --n-steps 30
 ```
 
-Results and plots: `experiments/intervention_results/`
+Results: `experiments/intervention_results/`  
+Detailed findings: `evaluation/README.md`
 
-**Output files per intervention:**
-- `intervention_{name}.png` — MSE curve (model vs. Lenia GT) over steps after perturbation
-- `snapshots_{name}.png` — Full timeline grid: pre-rollout → perturbation → post-rollout, one row per model + Lenia GT
-- `gif_{name}.gif` — Animated version of the same timeline (best trajectory selected automatically)
+**Output files:**
+- `intervention_{name}.png` — MSE curve (averaged over 5 trajectories) for all models vs. Lenia GT
+- `snapshots_{name}.png` — Full timeline grid: pre-rollout → before perturbation → PERTURBED (red border) → post-rollout, one row per model + GT
+- `gif_{name}_{model}.gif` — Animated `[Model | Lenia GT]` side by side (15 GIFs total: 5 interventions × 3 models)
+- `intervention_heatmap.png` — Mean MSE steps 1–10 for all (model, intervention) combinations
 
-**Eval output:**
-- `gif_rollout_all_models.gif` — Autoregressive rollout for all models + GT, side by side
-
-All plots use a **grayscale colormap** matching the single-channel Lenia frames.
+All plots use **grayscale colormap** matching the single-channel Lenia frames.
 
 ---
 
