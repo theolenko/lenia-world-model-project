@@ -4,11 +4,12 @@ Code for the seminar project in "Mathematics and AI Internship" (Data Science, U
 
 Comparison of three world model architectures on Lenia cellular automata, trained on two dataset versions.
 
-| Setup         | Encoder                               | Task                             | Training signal              |
-| ------------- | ------------------------------------- | -------------------------------- | ---------------------------- |
-| **Pixel-CNN** | CNN (4× stride-2 conv)                | Predict next frame (pixel space) | MSE vs ground truth          |
-| **Pixel-ViT** | ViT (patch_size=8, 6 layers, 8 heads) | Predict next frame (pixel space) | MSE vs ground truth          |
-| **JEPA-CNN**  | CNN (EMA target encoder)              | Predict next frame's embedding   | MSE in latent space + VICReg |
+| Setup            | Encoder                                      | Task                             | Training signal                     |
+| ---------------- | -------------------------------------------- | -------------------------------- | ----------------------------------- |
+| **Pixel-CNN**    | CNN (4× stride-2 conv)                       | Predict next frame (pixel space) | MSE vs ground truth                 |
+| **Pixel-ViT**    | ViT (patch_size=8, 6 layers, 8 heads)        | Predict next frame (pixel space) | MSE vs ground truth                 |
+| **JEPA-CNN**     | CNN (EMA target encoder, flat embedding)     | Predict next frame's embedding   | MSE in latent space + VICReg        |
+| **Patch-JEPA**   | ViT (pool=False, patch embeddings, EMA)      | Predict next frame's patch embs  | MSE over patches + VICReg           |
 
 ---
 
@@ -23,9 +24,9 @@ lenia-world-model-project/
 │   └── v2_lenia_val_chunked.h5        # v2 validation data
 ├── models/                            # Neural network architectures
 │   ├── encoder.py                     # LeniaEncoder (CNN), SimpleCNNEncoder, ViTEncoder
-│   ├── decoder.py                     # Pixel-prediction decoder (transposed conv)
-│   ├── predictor.py                   # JEPA latent predictor (2-layer MLP)
-│   └── world_model.py                 # PixelWorldModel and JEPAWorldModel + encoder registry
+│   ├── decoder.py                     # LeniaDecoder, SpatialLeniaDecoder, PatchDecoder
+│   ├── predictor.py                   # LeniaPredictor (flat MLP), PatchPredictor (per-patch MLP)
+│   └── world_model.py                 # PixelWorldModel, JEPAWorldModel, PatchJEPAWorldModel
 ├── training/                          # Training logic
 │   ├── trainer.py                     # Training loop, validation, TensorBoard logging, checkpointing
 │   └── losses.py                      # MSE loss, VICReg variance/covariance terms
@@ -116,10 +117,48 @@ Loss: MSE in pixel space.
 
 ### JEPAWorldModel
 
-- **Online encoder** encodes `frame_t` → `z_context`
+- **Online encoder** encodes `frame_t` → `z_context` (flat vector, shape `(B, embed_dim)`)
 - **MLP predictor** maps `z_context` → `z_pred`
 - **Target encoder** (EMA copy of online) encodes `frame_t+1` → `z_target` (no grad)
 - Loss: MSE(`z_pred`, `z_target`) + VICReg(variance) + VICReg(covariance) applied to `z_context`
+
+The encoder uses **Global Average Pooling (GAP)** which collapses the `(B, 256, 4, 4)` spatial feature map into a flat `(B, 256)` vector. This discards all positional information — limiting reconstruction quality.
+
+### PatchJEPAWorldModel
+
+Same JEPA principle but with **ViTEncoder(pool=False)**, keeping the 64 patch embeddings as separate vectors instead of collapsing them with GAP.
+
+- **Online encoder** `frame_t` → `(B, 64, embed_dim)` patch sequences
+- **PatchPredictor** maps patch embeddings → predicted patch embeddings (same MLP applied per-patch via `nn.Linear`)
+- **Target encoder** (EMA) encodes `frame_t+1` → `(B, 64, embed_dim)` (no grad)
+- Loss: MSE over all patch positions + VICReg on flattened `(B×64, embed_dim)`
+
+After JEPA training, a **PatchDecoder** is trained separately on the frozen encoder:
+```
+frame_t → frozen ViTEncoder → (B, 64, D) → PatchDecoder → frame_t (reconstructed)
+```
+
+This enables true autoregressive rollout at inference:
+```
+z_0 = encode(frame_0)
+z_1 = predictor(z_0)  →  decoder(z_1)  =  frame_1_pred
+z_2 = predictor(z_1)  →  decoder(z_2)  =  frame_2_pred
+...
+```
+
+### Why JEPA works better with ViT than CNN
+
+The key difference is what gets passed through the prediction bottleneck:
+
+| | CNN + GAP (JEPA-CNN) | ViT, pool=False (Patch-JEPA) |
+|---|---|---|
+| Encoder output | `(B, D)` — one vector | `(B, 64, D)` — 64 spatial vectors |
+| Spatial structure | Lost (GAP averages everything) | Preserved (each patch = one 8×8 region) |
+| Predictor input | Single global summary | Per-patch local features |
+| Decodable? | Not spatially (flat → no positional info) | Yes — reshape patches back to 8×8 grid |
+| Autoregressive rollout | Reconstruct only, not predict | Predict **and** decode next frame |
+
+ViT also produces better embeddings for JEPA because its **self-attention** explicitly models relationships between all 64 patches. The predictor can thus learn *which patches change* between frames — a much richer signal than predicting a single pooled vector.
 
 #### JEPA pitfalls (do not revert)
 
@@ -128,6 +167,7 @@ Loss: MSE in pixel space.
 | `ema_momentum` must be close to 1 (~0.99–0.999) | `update_target()` is called **per batch**, not per epoch. `0.92^300 ≈ 0` causes immediate target collapse. |
 | `var_reg_weight` should be small (~0.05–0.1)    | Weight 1.0 dominates the loss and prevents the predictor from learning.                                    |
 | VICReg only on `z_context`                      | `z_target` is inside `torch.no_grad()` — gradients are zero, regularising it is a no-op.                   |
+| VICReg on patch embeddings needs flattening     | Functions expect `(B, D)`. Flatten `(B, N, D)` → `(B*N, D)` before applying.                              |
 
 ---
 
@@ -136,8 +176,9 @@ Loss: MSE in pixel space.
 ### Quick smoke test (no data needed)
 
 ```bash
-python scripts/train_single.py --setup pixel --dummy
-python scripts/train_single.py --setup jepa  --dummy
+python scripts/train_single.py --setup pixel      --dummy
+python scripts/train_single.py --setup jepa       --dummy
+python scripts/train_single.py --setup patch_jepa --dummy
 ```
 
 ### Full training workflow
@@ -148,14 +189,18 @@ python scripts/rechunk_data.py --input data/v2_lenia_train.h5 --output data/v2_l
 python scripts/rechunk_data.py --input data/v2_lenia_val.h5   --output data/v2_lenia_val_chunked.h5
 
 # 2. HPO (optional — best params already in v2 configs)
-python scripts/run_hpo.py --setup pixel --config config_cluster_pixel_v2.yaml \
-    --storage sqlite:///experiments/hpo_pixel_v2.db --study-name pixel_v2_hpo
+python scripts/run_hpo.py --setup patch_jepa --config config_cluster_patch_jepa_v2.yaml \
+    --storage sqlite:///experiments/hpo_patch_jepa_v2.db --study-name patch_jepa_v2_hpo
 
 # 3. Full training
-python scripts/train_single.py --setup pixel --config config_cluster_pixel_v2.yaml
-python scripts/train_single.py --setup jepa  --config config_cluster_jepa_v2.yaml
+python scripts/train_single.py --setup pixel      --config config_cluster_pixel_v2.yaml
+python scripts/train_single.py --setup jepa       --config config_cluster_jepa_v2.yaml
+python scripts/train_single.py --setup patch_jepa --config config_cluster_patch_jepa_v2.yaml
 
-# 4. Monitor
+# 4. Train PatchDecoder on frozen Patch-JEPA encoder
+python scripts/train_patch_decoder.py --jepa-checkpoint experiments/.../checkpoint_best.pt
+
+# 5. Monitor
 tensorboard --logdir experiments/
 ```
 
@@ -182,11 +227,12 @@ python scripts/run_hpo.py --setup pixel \
 
 ### v2 HPO best results
 
-| Model     | Trial | val_loss | lr       | embed_dim | Notes                    |
-| --------- | ----- | -------- | -------- | --------- | ------------------------ |
-| Pixel-CNN | #17   | 0.01897  | 5.992e-4 | 128       | weight_decay=3.641e-6    |
-| Pixel-ViT | #20   | 0.02242  | 6.440e-5 | 256       | weight_decay=4.032e-5    |
-| JEPA-CNN  | #12   | 0.04926  | 3.856e-4 | 256       | ema=0.9926, var_w=0.0503 |
+| Model       | Trial | val_loss (10 epochs) | lr       | embed_dim | Notes                              |
+| ----------- | ----- | -------------------- | -------- | --------- | ---------------------------------- |
+| Pixel-CNN   | #17   | 0.01897              | 5.992e-4 | 128       | weight_decay=3.641e-6              |
+| Pixel-ViT   | #20   | 0.02242              | 6.440e-5 | 256       | weight_decay=4.032e-5              |
+| JEPA-CNN    | #12   | 0.04926              | 3.856e-4 | 256       | ema=0.9926, var_w=0.0503           |
+| Patch-JEPA  | #6    | 0.01794              | 1.523e-4 | 128       | ema=0.9919, var_w=0.3769, batch=16 |
 
 Best params are already written into the `config_cluster_*_v2.yaml` files.
 
@@ -231,11 +277,13 @@ rsync -avz <unilogin>@login01.sc.uni-leipzig.de:~/lenia-results/ ./experiments/c
 
 ### Job time limits
 
-| Job       | Script                  | Time limit | Why                                |
-| --------- | ----------------------- | ---------- | ---------------------------------- |
-| Pixel-CNN | `train_pixel_v2_job.sh` | 8 h        | ~4–5 h for 100 epochs              |
-| JEPA-CNN  | `train_jepa_v2_job.sh`  | 8 h        | ~4–5 h for 100 epochs              |
-| Pixel-ViT | `train_vit_v2_job.sh`   | **12 h**   | ~9 h for 100 epochs (~320 s/epoch) |
+| Job           | Script                       | Time limit | Why                                      |
+| ------------- | ---------------------------- | ---------- | ---------------------------------------- |
+| Pixel-CNN     | `train_pixel_v2_job.sh`      | 8 h        | ~4–5 h for 100 epochs                    |
+| JEPA-CNN      | `train_jepa_v2_job.sh`       | 8 h        | ~4–5 h for 100 epochs                    |
+| Pixel-ViT     | `train_vit_v2_job.sh`        | **12 h**   | ~9 h for 100 epochs (~320 s/epoch)       |
+| Patch-JEPA    | `train_patch_jepa_v2_job.sh` | **24 h**   | ~20 h for 100 epochs (~730 s/epoch)      |
+| PatchDecoder  | `train_patch_decoder_v2_job.sh` | 6 h     | ~1.5 h for 50 epochs (~110 s/epoch)      |
 
 ### HPO on cluster
 
@@ -294,6 +342,40 @@ ssh <unilogin>@login01.sc.uni-leipzig.de "cd ~/lenia-world-model && \
 | `hpo`      | `hpo_epochs`              | Training epochs per HPO trial                               |
 | `hpo`      | `storage`                 | Optuna SQLite URL (e.g. `sqlite:///experiments/hpo.db`)     |
 | `hpo`      | `search_space`            | Bounds / choices for each tuneable hyperparameter           |
+
+---
+
+## Results
+
+### v2 Full Training Results
+
+| Model        | Final val_loss | Epochs | Notes                                      |
+| ------------ | -------------- | ------ | ------------------------------------------ |
+| Pixel-CNN    | ~0.019         | 100    | Pixel MSE — direct next-frame prediction   |
+| Pixel-ViT    | ~0.022         | 100    | Pixel MSE — ViT encoder, same task         |
+| JEPA-CNN     | ~0.049         | 100    | Embedding MSE + VICReg (not comparable)    |
+| Patch-JEPA   | 0.01340        | 100    | Embedding MSE over 64 patches + VICReg     |
+| PatchDecoder | 0.000102       | 50     | Pixel MSE — reconstruction from frozen enc |
+
+> Note: JEPA and Pixel model losses are measured in different spaces (embedding vs pixel MSE) and are **not directly comparable**. The PatchDecoder val_loss represents pixel reconstruction quality of the frozen encoder, not temporal prediction.
+
+### Generated visualizations (`experiments/plots/`)
+
+| File | Description |
+|---|---|
+| `results_loss_curves_pixel.png` | Pixel-CNN vs Pixel-ViT training curves (shared y-axis) |
+| `results_loss_curves_jepa.png` | JEPA-CNN stage 1 + decoder stage 2 |
+| `results_loss_curves_patch_jepa.png` | Patch-JEPA stage 1 + PatchDecoder stage 2 |
+| `results_predictions_pixel.png` | Pixel-CNN: input \| predicted t+1 \| ground truth |
+| `results_predictions_vit.png` | Pixel-ViT: input \| predicted t+1 \| ground truth |
+| `results_predictions_jepa.png` | JEPA-CNN reconstruction via spatial decoder |
+| `results_predictions_patch_jepa.png` | Patch-JEPA: encode → predictor → decode |
+| `trajectory_comparison_cnn.gif` | Pixel-CNN teacher-forced rollout |
+| `trajectory_comparison_jepa.gif` | JEPA-CNN reconstruction (teacher-forced) |
+| `trajectory_autoregressive_cnn.gif` | Pixel-CNN autoregressive rollout |
+| `trajectory_autoregressive_vit.gif` | Pixel-ViT autoregressive rollout |
+| `trajectory_autoregressive_jepa.gif` | JEPA-CNN autoregressive (spatial decode loop) |
+| `trajectory_autoregressive_patch_jepa.gif` | Patch-JEPA true rollout: encode → predictor×T → decoder |
 
 ---
 

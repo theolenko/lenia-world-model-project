@@ -4,11 +4,13 @@ Produces files saved to experiments/plots/:
   Loss curves:
     results_loss_curves_pixel.png      — Pixel-CNN vs Pixel-ViT (shared y-axis)
     results_loss_curves_jepa.png       — JEPA training + Decoder training (pipeline view)
+    results_loss_curves_patch_jepa.png — Patch-JEPA training + PatchDecoder training
 
   Pixel predictions (input | predicted t+1 | ground truth):
     results_predictions_pixel.png      — Pixel-CNN
     results_predictions_vit.png        — Pixel-ViT
-    results_predictions_jepa.png       — JEPA decoded (encode → predict → decode)
+    results_predictions_jepa.png       — JEPA-CNN reconstruction
+    results_predictions_patch_jepa.png — Patch-JEPA: encode → predictor → decode
 
   Teacher-forced GIFs (real frame_t → model → predicted t+1 vs ground truth):
     trajectory_comparison_cnn.gif
@@ -18,6 +20,7 @@ Produces files saved to experiments/plots/:
     trajectory_autoregressive_cnn.gif
     trajectory_autoregressive_vit.gif
     trajectory_autoregressive_jepa.gif
+    trajectory_autoregressive_patch_jepa.gif  — true JEPA rollout via predictor
 
 Usage:
     python scripts/visualize_results.py
@@ -34,8 +37,8 @@ from torch.utils.data import DataLoader
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from models.decoder import SpatialLeniaDecoder
-from models.world_model import JEPAWorldModel, PixelWorldModel
+from models.decoder import SpatialLeniaDecoder, PatchDecoder
+from models.world_model import JEPAWorldModel, PixelWorldModel, PatchJEPAWorldModel
 from scripts.train_single import LeniaDataset
 from tensorboard.backend.event_processing.event_accumulator import EventAccumulator
 
@@ -50,8 +53,10 @@ DECODER_DIR    = ROOT / "experiments/cluster/decoder_v2_22917956/experiments/dec
 # Named checkpoints
 PIXEL_CNN_CKPT = ROOT / "checkpoints/pixel_cnn_v2.pt"
 PIXEL_VIT_CKPT = ROOT / "checkpoints/pixel_vit_v2.pt"
-JEPA_CKPT      = ROOT / "checkpoints/jepa_cnn_v2.pt"
-DECODER_CKPT   = ROOT / "checkpoints/decoder_jepa_v2.pt"
+JEPA_CKPT          = ROOT / "checkpoints/jepa_cnn_v2.pt"
+DECODER_CKPT       = ROOT / "checkpoints/decoder_jepa_v2.pt"
+PATCH_JEPA_CKPT    = ROOT / "checkpoints/patch_jepa_v2.pt"
+PATCH_DECODER_CKPT = ROOT / "checkpoints/patch_decoder_v2.pt"
 
 VAL_PATH = ROOT / "data/v2_lenia_val_chunked.h5"
 OUT_DIR  = ROOT / "experiments/plots"
@@ -377,6 +382,107 @@ def make_jepa_autoregressive_gif(traj_idx: int = 5, fps: int = 10) -> None:
               "trajectory_autoregressive_jepa.gif", fps)
 
 
+def _load_patch_jepa_pipeline(
+    jepa_ckpt: Path, decoder_ckpt: Path
+) -> tuple[nn.Module, nn.Module, nn.Module]:
+    """Return (frozen encoder, frozen predictor, frozen patch decoder)."""
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+    jepa_state = torch.load(jepa_ckpt, map_location=device, weights_only=False)["model_state_dict"]
+    embed_dim = jepa_state["online_encoder.patch_embed.weight"].shape[0]
+    predictor_hidden_dim = jepa_state["predictor.net.0.weight"].shape[0]
+    jepa = PatchJEPAWorldModel(embed_dim=embed_dim, predictor_hidden_dim=predictor_hidden_dim)
+    jepa.load_state_dict(jepa_state)
+    encoder   = jepa.online_encoder.to(device).eval()
+    predictor = jepa.predictor.to(device).eval()
+
+    dec_state = torch.load(decoder_ckpt, map_location=device, weights_only=False)["model_state_dict"]
+    decoder = PatchDecoder(embed_dim=embed_dim).to(device)
+    decoder.load_state_dict(dec_state)
+    decoder.eval()
+
+    for m in (encoder, predictor, decoder):
+        for p in m.parameters():
+            p.requires_grad = False
+
+    return encoder, predictor, decoder
+
+
+def plot_patch_jepa_predictions(n_samples: int = 5) -> None:
+    """Patch-JEPA prediction: encode(frame_t) → predictor → decode → predicted frame_t+1."""
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    encoder, predictor, decoder = _load_patch_jepa_pipeline(PATCH_JEPA_CKPT, PATCH_DECODER_CKPT)
+
+    ds     = LeniaDataset(str(VAL_PATH))
+    loader = DataLoader(ds, batch_size=n_samples, shuffle=True)
+    frame_t, frame_t1 = next(iter(loader))
+
+    with torch.no_grad():
+        patches = encoder(frame_t.to(device))     # (B, N, D)
+        z_pred  = predictor(patches)               # (B, N, D)
+        pred    = decoder(z_pred).cpu()            # (B, 1, 64, 64)
+
+    _save_predictions_grid(
+        frame_t.numpy(), pred.numpy(), frame_t1.numpy(),
+        title="Patch-JEPA: Input | decoder(predictor(encode(t))) | True t+1",
+        out_name="results_predictions_patch_jepa.png",
+    )
+
+
+def plot_loss_curves_patch_jepa() -> None:
+    patch_jepa_dir = ROOT / "experiments/cluster/patch_jepa_v2_24523549/experiments/patch_jepa_20260625_163647"
+    patch_dec_dir  = ROOT / "experiments/cluster/patch_decoder_v2_24613464/experiments/patch_decoder_20260629_102420"
+
+    pj  = load_scalars(patch_jepa_dir, ["train/loss_epoch", "val/loss_epoch"])
+    dec = load_scalars(patch_dec_dir,  ["train/loss_epoch", "val/loss_epoch"])
+
+    fig, axes = plt.subplots(1, 2, figsize=(11, 4))
+    fig.suptitle("Patch-JEPA Pipeline — Training Loss (v2 data)", fontsize=12)
+
+    for ax, scalars, title, ylabel in [
+        (axes[0], pj,  "Stage 1 — Patch-JEPA  (MSE + VICReg)", "JEPA Loss"),
+        (axes[1], dec, "Stage 2 — PatchDecoder  (reconstruction MSE)", "MSE Loss"),
+    ]:
+        if "train/loss_epoch" in scalars:
+            ax.plot(*scalars["train/loss_epoch"], label="train", color="#2196F3")
+        if "val/loss_epoch" in scalars:
+            ax.plot(*scalars["val/loss_epoch"],   label="val",   color="#FF5722", alpha=0.85)
+        ax.set_title(title, fontsize=10)
+        ax.set_xlabel("Epoch")
+        ax.set_ylabel(ylabel)
+        ax.legend()
+        ax.grid(True, alpha=0.3)
+
+    plt.tight_layout()
+    out = OUT_DIR / "results_loss_curves_patch_jepa.png"
+    plt.savefig(out, dpi=150, bbox_inches="tight")
+    print(f"Saved: {out}")
+    plt.close()
+
+
+def make_patch_jepa_autoregressive_gif(traj_idx: int = 5, fps: int = 10) -> None:
+    """True JEPA autoregressive rollout: encode(frame_0) → [predictor → decoder] × T.
+
+    Only frame_0 is encoded. All subsequent frames are generated purely in
+    embedding space via the predictor, then decoded to pixels.
+    """
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    encoder, predictor, decoder = _load_patch_jepa_pipeline(PATCH_JEPA_CKPT, PATCH_DECODER_CKPT)
+    traj = _load_traj(traj_idx)
+    T = traj.shape[0]
+
+    preds = []
+    with torch.no_grad():
+        frame = torch.from_numpy(traj[0]).unsqueeze(0).unsqueeze(0).to(device)
+        z = encoder(frame)          # encode only once
+        for _ in range(T - 1):
+            z = predictor(z)        # step in embedding space
+            preds.append(decoder(z).squeeze().cpu().numpy())
+
+    _save_gif(preds, traj, "Patch-JEPA", "Patch-JEPA — Autoregressive Rollout (encode → predictor → decoder)",
+              "trajectory_autoregressive_patch_jepa.gif", fps)
+
+
 def _save_gif(
     preds: list,
     traj: np.ndarray,
@@ -444,4 +550,14 @@ if __name__ == "__main__":
             make_jepa_teacher_forced_gif()
             make_jepa_autoregressive_gif()
         else:
-            print("Skipping JEPA visuals — checkpoint(s) not found.")
+            print("Skipping JEPA-CNN visuals — checkpoint(s) not found.")
+
+        print("\n=== Patch-JEPA (decoded) ===")
+        if PATCH_JEPA_CKPT.exists() and PATCH_DECODER_CKPT.exists():
+            plot_patch_jepa_predictions()
+            make_patch_jepa_autoregressive_gif()
+        else:
+            print("Skipping Patch-JEPA visuals — checkpoint(s) not found.")
+
+    print("\n=== Loss curves — Patch-JEPA pipeline ===")
+    plot_loss_curves_patch_jepa()

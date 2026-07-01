@@ -13,19 +13,19 @@
 data:
   train_path: data/v2_lenia_train_chunked.h5
   val_path:   data/v2_lenia_val_chunked.h5
-  batch_size: 32
+  batch_size: 16
   num_workers: 8
 
 model:
-  embed_dim: 256                             # must be divisible by num_heads=8
-  ema_momentum: 0.996                        # per-batch EMA — keep close to 1.0
-  predictor_hidden_dim: 512
+  embed_dim: 128                             # HPO best: trial #6, val_loss=0.01794
+  ema_momentum: 0.9919                       # HPO best
+  predictor_hidden_dim: 256                  # HPO best
 
 training:
   num_epochs: 100
   early_stopping_patience: 15
-  learning_rate: 1.0e-4                      # conservative starting point for ViT
-  weight_decay: 1.0e-5
+  learning_rate: 1.523e-4                    # HPO best
+  weight_decay: 4.598e-4                     # HPO best
   use_lr_schedule: true
   log_interval: 50
   checkpoint_interval: 10
@@ -33,8 +33,8 @@ training:
 jepa:
   use_variance_reg: true
   use_covariance_reg: true
-  var_reg_weight: 0.05
-  cov_reg_weight: 0.03
+  var_reg_weight: 0.3769                     # HPO best
+  cov_reg_weight: 0.001995                   # HPO best
 
 hpo:
   n_trials: 10
