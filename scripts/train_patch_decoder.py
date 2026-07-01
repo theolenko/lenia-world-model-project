@@ -125,13 +125,8 @@ def train_decoder(
             frame_t = frame_t.to(device)
 
             with torch.no_grad():
-                z_enc = encoder(frame_t)   # (B, N_patches, embed_dim)
-                # 50% of batches: use predictor output so the decoder sees
-                # the same embedding distribution it gets at inference time
-                if random.random() < 0.5:
-                    patches = predictor(z_enc)
-                else:
-                    patches = z_enc
+                z_enc  = encoder(frame_t)    # (B, N_patches, embed_dim)
+                patches = predictor(z_enc)   # always decode predictor output
 
             recon = decoder(patches)        # (B, 1, 64, 64)
             loss = criterion(recon, frame_t)
