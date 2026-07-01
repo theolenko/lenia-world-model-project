@@ -43,8 +43,11 @@ def set_seed(seed: int) -> None:
     torch.backends.cudnn.benchmark = False
 
 
-def load_frozen_encoder(ckpt_path: str, embed_dim: int, device: torch.device) -> nn.Module:
-    """Load the online ViT encoder from a PatchJEPA checkpoint and freeze it."""
+def load_frozen_encoder(ckpt_path: str, embed_dim: int, device: torch.device):
+    """Load frozen online encoder + predictor from a PatchJEPA checkpoint.
+
+    Returns (encoder, predictor) both frozen and in eval mode.
+    """
     ckpt = torch.load(ckpt_path, map_location=device, weights_only=False)
     state = ckpt["model_state_dict"]
 
@@ -55,12 +58,13 @@ def load_frozen_encoder(ckpt_path: str, embed_dim: int, device: torch.device) ->
         predictor_hidden_dim=predictor_hidden_dim,
     )
     model.load_state_dict(state)
+    model = model.to(device)
 
-    encoder = model.online_encoder.to(device)
-    for param in encoder.parameters():
+    for param in model.parameters():
         param.requires_grad = False
-    encoder.eval()
-    return encoder
+    model.eval()
+
+    return model.online_encoder, model.predictor
 
 
 def train_decoder(
@@ -83,8 +87,8 @@ def train_decoder(
 
     train_loader, val_loader = build_dataloaders(cfg, dummy=dummy)
 
-    print(f"Loading frozen PatchJEPA encoder from: {jepa_ckpt_path}")
-    encoder = load_frozen_encoder(jepa_ckpt_path, embed_dim, device)
+    print(f"Loading frozen PatchJEPA encoder+predictor from: {jepa_ckpt_path}")
+    encoder, predictor = load_frozen_encoder(jepa_ckpt_path, embed_dim, device)
 
     decoder = PatchDecoder(embed_dim=embed_dim).to(device)
     num_params = sum(p.numel() for p in decoder.parameters() if p.requires_grad)
@@ -121,7 +125,13 @@ def train_decoder(
             frame_t = frame_t.to(device)
 
             with torch.no_grad():
-                patches = encoder(frame_t)  # (B, N_patches, embed_dim)
+                z_enc = encoder(frame_t)   # (B, N_patches, embed_dim)
+                # 50% of batches: use predictor output so the decoder sees
+                # the same embedding distribution it gets at inference time
+                if random.random() < 0.5:
+                    patches = predictor(z_enc)
+                else:
+                    patches = z_enc
 
             recon = decoder(patches)        # (B, 1, 64, 64)
             loss = criterion(recon, frame_t)
@@ -144,7 +154,9 @@ def train_decoder(
         with torch.no_grad():
             for frame_t, _ in val_loader:
                 frame_t = frame_t.to(device)
-                patches = encoder(frame_t)
+                # Validate on predictor embeddings — matches inference distribution
+                z_enc = encoder(frame_t)
+                patches = predictor(z_enc)
                 recon = decoder(patches)
                 total_val += criterion(recon, frame_t).item()
 

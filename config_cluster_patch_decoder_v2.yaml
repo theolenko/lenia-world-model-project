@@ -15,8 +15,8 @@ model:
   embed_dim: 128                             # must match patch_jepa checkpoint
 
 training:
-  num_epochs: 50
-  early_stopping_patience: 10
+  num_epochs: 100
+  early_stopping_patience: 20
   learning_rate: 1.0e-3
   weight_decay: 1.0e-5
   use_lr_schedule: true
