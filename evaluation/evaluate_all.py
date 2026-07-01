@@ -373,7 +373,7 @@ def collect_rollout_frames(model_name: str, traj: torch.Tensor,
 
 def save_eval_gifs(loaded: dict, trajs: torch.Tensor,
                    rollout_steps: int, out_dir: Path) -> None:
-    """One GIF per model: [model prediction | ground truth] side-by-side, animated."""
+    """One combined GIF: all models + GT as rows, animated over autoregressive rollout."""
     try:
         from PIL import Image, ImageDraw
     except ImportError:
@@ -383,61 +383,78 @@ def save_eval_gifs(loaded: dict, trajs: torch.Tensor,
     n_trajs = trajs.shape[0]
     rollout_steps = min(rollout_steps, trajs.shape[1] - 1)
 
+    # Pick best trajectory using first loaded model (lowest autoregressive MSE)
+    ref_name = next(iter(loaded))
+    ref_obj  = loaded[ref_name]
+    ref_dev  = next(iter(
+        ref_obj.parameters() if not isinstance(ref_obj, tuple)
+        else ref_obj[0].parameters()
+    )).device
+
+    best_score, best_idx = float("inf"), 0
+    for ti in range(n_trajs):
+        traj = trajs[ti].to(ref_dev)
+        pf = collect_rollout_frames(ref_name, traj, rollout_steps, loaded)
+        gt = traj[:, 0].cpu().numpy()
+        score = float(np.mean((pf[1:] - gt[1:rollout_steps + 1]) ** 2))
+        if score < best_score:
+            best_score, best_idx = score, ti
+    print(f"  Best trajectory for GIF: {best_idx}  (MSE={best_score:.5f})")
+
+    # Collect frames for every model on the best trajectory
+    all_pred: dict[str, np.ndarray] = {}
+    for model_name in loaded:
+        dev = next(iter(
+            loaded[model_name].parameters() if not isinstance(loaded[model_name], tuple)
+            else loaded[model_name][0].parameters()
+        )).device
+        all_pred[model_name] = collect_rollout_frames(
+            model_name, trajs[best_idx].to(dev), rollout_steps, loaded
+        )
+    gt_frames = trajs[best_idx, :, 0].cpu().numpy()   # (T, H, W)
+
+    # Layout: label column + single frame panel, rows = models + GT
     scale = 4
-    H, W = 64, 64
-    gap = 4
-    label_h = 18
-    panel = H * scale
-    img_w = 2 * panel + gap
-    img_h = label_h + panel
+    label_w, top_h = 90, 18
+    panel_h = 64 * scale
+    panel_w = 64 * scale
+    row_labels = list(all_pred.keys()) + ["Ground Truth"]
+    img_w = label_w + panel_w
+    img_h = top_h + len(row_labels) * panel_h
 
     def to_gray_rgb(f: np.ndarray) -> np.ndarray:
         g = (np.clip(f, 0, 1) * 255).astype(np.uint8)
         return np.stack([g, g, g], axis=-1)
 
-    for model_name, model_obj in loaded.items():
-        device = next(iter(
-            model_obj.parameters() if not isinstance(model_obj, tuple)
-            else model_obj[0].parameters()
-        )).device
+    gif_imgs = []
+    for fi in range(rollout_steps + 1):
+        img = Image.new("RGB", (img_w, img_h), (15, 15, 15))
+        draw = ImageDraw.Draw(img)
+        draw.text((label_w + 3, 2),
+                  f"Autoregressive rollout   step {fi}",
+                  fill=(200, 200, 200))
 
-        # Pick trajectory with lowest average MSE → cleanest looking GIF
-        best_score, best_traj_idx = float("inf"), 0
-        for ti in range(n_trajs):
-            traj = trajs[ti].to(device)
-            pred_frames = collect_rollout_frames(model_name, traj, rollout_steps, loaded)
-            gt_frames   = traj[:, 0].cpu().numpy()  # (T, H, W)
-            score = float(np.mean((pred_frames[1:] - gt_frames[1:rollout_steps+1]) ** 2))
-            if score < best_score:
-                best_score, best_traj_idx = score, ti
+        for row, label in enumerate(row_labels):
+            if label == "Ground Truth":
+                frame = gt_frames[min(fi, len(gt_frames) - 1)]
+            else:
+                frames = all_pred[label]
+                frame = frames[min(fi, len(frames) - 1)]
 
-        traj = trajs[best_traj_idx].to(device)
-        pred_frames = collect_rollout_frames(model_name, traj, rollout_steps, loaded)
-        gt_frames   = traj[:, 0].cpu().numpy()   # (T, H, W)
+            panel = Image.fromarray(to_gray_rgb(frame)).resize(
+                (panel_w, panel_h), Image.NEAREST)
+            y0 = top_h + row * panel_h
+            img.paste(panel, (label_w, y0))
+            draw.text((2, y0 + panel_h // 2 - 6), label, fill=(200, 200, 200))
+            if row > 0:
+                draw.line([(0, y0), (img_w, y0)], fill=(50, 50, 50), width=1)
 
-        gif_imgs = []
-        for fi in range(rollout_steps + 1):
-            img = Image.new("RGB", (img_w, img_h), (15, 15, 15))
-            draw = ImageDraw.Draw(img)
+        gif_imgs.append(img)
 
-            draw.text((2, 2),
-                      f"{model_name}  step {fi}  |  left=model  right=GT",
-                      fill=(200, 200, 200))
-
-            pred_img = Image.fromarray(to_gray_rgb(pred_frames[fi])).resize(
-                (panel, panel), Image.NEAREST)
-            gt_img = Image.fromarray(
-                to_gray_rgb(gt_frames[min(fi, len(gt_frames) - 1)])).resize(
-                (panel, panel), Image.NEAREST)
-
-            img.paste(pred_img, (0, label_h))
-            img.paste(gt_img, (panel + gap, label_h))
-            gif_imgs.append(img)
-
-        out = out_dir / f"gif_rollout_{model_name.replace('-', '_').lower()}.gif"
-        gif_imgs[0].save(out, save_all=True, append_images=gif_imgs[1:],
-                         duration=120, loop=0)
-        print(f"  Saved: {out}")
+    out = out_dir / "gif_rollout_all_models.gif"
+    gif_imgs[0].save(out, save_all=True, append_images=gif_imgs[1:],
+                     duration=120, loop=0)
+    print(f"  Saved: {out}")
 
 
 def save_summary(one_step: dict, rollout: dict, ood: dict, out_dir: Path) -> None:
