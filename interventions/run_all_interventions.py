@@ -169,8 +169,9 @@ def plot_frame_snapshots(intv_name: str,
     # ── Draw each row ──────────────────────────────────────────
     def draw_row(row: int, pre_frames: np.ndarray, post_frames: np.ndarray,
                  row_intervened: np.ndarray, label: str) -> None:
-        axes[row, 0].set_ylabel(label, fontsize=9, fontweight="bold",
-                                rotation=0, labelpad=65, va="center")
+        # text() with transAxes stays visible even after axis("off")
+        axes[row, 0].text(-0.25, 0.5, label, transform=axes[row, 0].transAxes,
+                          fontsize=9, fontweight="bold", ha="right", va="center")
 
         # Pre frames
         for col, s in enumerate(pre_show):

@@ -245,7 +245,11 @@ def plot_one_step_grid(loaded: dict, dataset, out_dir: Path, n: int = 6) -> None
 
     n_models = len(loaded)
     fig, axes = plt.subplots(n_models, 3 * n, figsize=(3 * n, 2.5 * n_models))
-    fig.suptitle("One-step: Input t  |  Predicted t+1  |  Ground truth t+1", fontsize=10)
+    fig.suptitle(
+        "One-step prediction  —  each triplet: Input t | Predicted t+1 | GT t+1\n"
+        "(row = model, column groups = random val samples)",
+        fontsize=10
+    )
     if n_models == 1:
         axes = axes[np.newaxis, :]
 
@@ -270,9 +274,12 @@ def plot_one_step_grid(loaded: dict, dataset, out_dir: Path, n: int = 6) -> None
                 ax = axes[row, col * 3 + offset]
                 ax.imshow(img, cmap="gray", vmin=0, vmax=1)
                 ax.axis("off")
-                if row == 0 and col == 0:
-                    ax.set_title(["t", "pred t+1", "GT t+1"][offset], fontsize=7)
-        axes[row, 0].set_ylabel(model_name, fontsize=8)
+                if row == 0:
+                    ax.set_title(["Input t", "Predicted t+1", "GT t+1"][offset],
+                                 fontsize=7)
+        # text() stays visible after axis("off")
+        axes[row, 0].text(-0.08, 0.5, model_name, transform=axes[row, 0].transAxes,
+                          fontsize=9, fontweight="bold", ha="right", va="center")
 
     plt.tight_layout()
     out = out_dir / "one_step_grid.png"
