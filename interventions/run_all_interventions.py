@@ -166,19 +166,26 @@ def plot_frame_snapshots(intv_name: str,
         axes[0, intv_col + 1 + offset].set_title(f"t*+{s}", fontsize=7,
                                                    color="darkorange")
 
+    def _hide_ax(ax):
+        """Hide ticks/spines without calling axis('off') so ylabel stays visible."""
+        ax.set_xticks([]); ax.set_yticks([])
+        for s in ax.spines.values(): s.set_visible(False)
+
     # ── Draw each row ──────────────────────────────────────────
     def draw_row(row: int, pre_frames: np.ndarray, post_frames: np.ndarray,
                  row_intervened: np.ndarray, label: str) -> None:
-        # text() with transAxes stays visible even after axis("off")
-        axes[row, 0].text(-0.25, 0.5, label, transform=axes[row, 0].transAxes,
-                          fontsize=9, fontweight="bold", ha="right", va="center")
 
-        # Pre frames
+        # Pre frames — first panel kept "on" so ylabel is visible
         for col, s in enumerate(pre_show):
-            axes[row, col].imshow(
-                np.clip(pre_frames[min(s, len(pre_frames) - 1)], 0, 1),
-                cmap="gray", vmin=0, vmax=1)
-            axes[row, col].axis("off")
+            ax = axes[row, col]
+            ax.imshow(np.clip(pre_frames[min(s, len(pre_frames) - 1)], 0, 1),
+                      cmap="gray", vmin=0, vmax=1)
+            if col == 0:
+                _hide_ax(ax)
+                ax.set_ylabel(label, fontsize=9, fontweight="bold",
+                              rotation=0, labelpad=70, va="center")
+            else:
+                ax.axis("off")
 
         # Frame right before perturbation (model's own predicted frame at t*)
         axes[row, before_col].imshow(

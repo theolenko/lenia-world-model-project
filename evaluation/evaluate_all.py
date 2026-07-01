@@ -273,13 +273,17 @@ def plot_one_step_grid(loaded: dict, dataset, out_dir: Path, n: int = 6) -> None
             for offset, img in enumerate([inp_np[col], pred_np[col], gt_np[col]]):
                 ax = axes[row, col * 3 + offset]
                 ax.imshow(img, cmap="gray", vmin=0, vmax=1)
-                ax.axis("off")
                 if row == 0:
                     ax.set_title(["Input t", "Predicted t+1", "GT t+1"][offset],
                                  fontsize=7)
-        # text() stays visible after axis("off")
-        axes[row, 0].text(-0.08, 0.5, model_name, transform=axes[row, 0].transAxes,
-                          fontsize=9, fontweight="bold", ha="right", va="center")
+                if col == 0 and offset == 0:
+                    # Keep axis on so ylabel is visible; just hide ticks/spines
+                    ax.set_xticks([]); ax.set_yticks([])
+                    for sp in ax.spines.values(): sp.set_visible(False)
+                    ax.set_ylabel(model_name, fontsize=9, fontweight="bold",
+                                  rotation=0, labelpad=55, va="center")
+                else:
+                    ax.axis("off")
 
     plt.tight_layout()
     out = out_dir / "one_step_grid.png"
