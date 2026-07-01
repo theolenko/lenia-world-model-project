@@ -413,14 +413,16 @@ def save_eval_gifs(loaded: dict, trajs: torch.Tensor,
         )
     gt_frames = trajs[best_idx, :, 0].cpu().numpy()   # (T, H, W)
 
-    # Layout: label column + single frame panel, rows = models + GT
+    # Layout: models + GT side by side as columns, time animated
     scale = 4
-    label_w, top_h = 90, 18
+    gap = 3
+    top_h, bot_h = 18, 14
     panel_h = 64 * scale
     panel_w = 64 * scale
-    row_labels = list(all_pred.keys()) + ["Ground Truth"]
-    img_w = label_w + panel_w
-    img_h = top_h + len(row_labels) * panel_h
+    col_labels = list(all_pred.keys()) + ["Ground Truth"]
+    n_cols = len(col_labels)
+    img_w = n_cols * panel_w + (n_cols - 1) * gap
+    img_h = top_h + panel_h + bot_h
 
     def to_gray_rgb(f: np.ndarray) -> np.ndarray:
         g = (np.clip(f, 0, 1) * 255).astype(np.uint8)
@@ -430,24 +432,21 @@ def save_eval_gifs(loaded: dict, trajs: torch.Tensor,
     for fi in range(rollout_steps + 1):
         img = Image.new("RGB", (img_w, img_h), (15, 15, 15))
         draw = ImageDraw.Draw(img)
-        draw.text((label_w + 3, 2),
-                  f"Autoregressive rollout   step {fi}",
+        draw.text((4, 2), f"Autoregressive rollout   step {fi}",
                   fill=(200, 200, 200))
 
-        for row, label in enumerate(row_labels):
+        for ci, label in enumerate(col_labels):
+            x0 = ci * (panel_w + gap)
             if label == "Ground Truth":
                 frame = gt_frames[min(fi, len(gt_frames) - 1)]
             else:
-                frames = all_pred[label]
-                frame = frames[min(fi, len(frames) - 1)]
+                frame = all_pred[label][min(fi, len(all_pred[label]) - 1)]
 
             panel = Image.fromarray(to_gray_rgb(frame)).resize(
                 (panel_w, panel_h), Image.NEAREST)
-            y0 = top_h + row * panel_h
-            img.paste(panel, (label_w, y0))
-            draw.text((2, y0 + panel_h // 2 - 6), label, fill=(200, 200, 200))
-            if row > 0:
-                draw.line([(0, y0), (img_w, y0)], fill=(50, 50, 50), width=1)
+            img.paste(panel, (x0, top_h))
+            short = label.replace("Ground Truth", "GT").replace("Pixel-", "Px-")
+            draw.text((x0 + 2, top_h + panel_h + 1), short, fill=(180, 180, 180))
 
         gif_imgs.append(img)
 
