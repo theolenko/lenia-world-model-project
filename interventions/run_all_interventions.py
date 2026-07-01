@@ -121,73 +121,84 @@ def plot_frame_snapshots(intv_name: str,
                          gt_pre: np.ndarray, gt_post: np.ndarray,
                          intervened: np.ndarray, n_steps: int, t_star: int,
                          out_dir: Path) -> None:
-    """Full timeline per row: pre-rollout → INTERVENTION → post-rollout.
+    """Full timeline grid: pre-rollout | before-perturbation | PERTURBED | post-rollout.
 
-    Each row is one model (or Lenia GT simulator).
-    Left section:  frames before the intervention (t=0, t=t_star/2, t=t_star).
-    Middle:        the intervened/perturbed frame (t*).
-    Right section: frames after the intervention (+1, +n//4, +n//2, +n steps).
+    Columns:
+      pre_show  — a few frames before intervention (blue headers)
+      t_star    — the GT frame right before perturbation (labeled "before →")
+      intervened — the shared perturbed frame, red border (labeled "← PERTURBED")
+      post_show  — model/GT frames after intervention (orange headers)
+
+    Showing both 't_star' and 'intervened' side by side makes the perturbation
+    immediately visible as the pixel difference between those two adjacent columns.
     """
-    pre_show = sorted({0, t_star // 2, t_star - 1}) if t_star > 1 else [0]
+    pre_show = sorted({0, t_star // 2}) if t_star > 2 else [0]
     post_show = sorted({1, max(2, n_steps // 4), n_steps // 2, n_steps})
 
     models = list(model_posts.keys())
-    row_labels = [f"{m}\n(model)" for m in models] + ["Lenia GT\n(simulator)"]
-    n_rows = len(row_labels)
-    # cols: pre-cols | intervened col | post-cols
-    n_cols = len(pre_show) + 1 + len(post_show)
+    n_rows = len(models) + 1   # models + GT
+    # cols: pre | before-perturbation | PERTURBED | post
+    n_cols = len(pre_show) + 1 + 1 + len(post_show)
+    before_col = len(pre_show)        # "before perturbation" column
+    intv_col   = before_col + 1       # the perturbed frame column
 
     fig, axes = plt.subplots(n_rows, n_cols,
                              figsize=(2.6 * n_cols, 2.6 * n_rows))
 
     fig.suptitle(
         f"Intervention: {intv_name}  —  full timeline\n"
-        f"← {t_star} steps autonomous rollout  |  INTERVENTION ↓  |  {n_steps} steps after →\n"
-        f"Model rows: world-model predictions.  Lenia GT: real simulator.",
+        f"Blue: {t_star}-step pre-rollout  |  Red: perturbation at t*  |  "
+        f"Orange: {n_steps} steps after (model vs. Lenia GT)",
         fontsize=9, y=1.02
     )
 
-    # ── Column headers ────────────────────────────────────────
+    # ── Column headers ─────────────────────────────────────────
     for col, s in enumerate(pre_show):
-        lbl = f"t=0\n(start)" if s == 0 else f"t={s}"
-        axes[0, col].set_title(lbl, fontsize=7, color="steelblue")
-
-    intv_col = len(pre_show)
-    axes[0, intv_col].set_title(f"t*={t_star}\nINTERVENTION", fontsize=7,
+        axes[0, col].set_title("t=0\n(start)" if s == 0 else f"t={s}",
+                               fontsize=7, color="steelblue")
+    axes[0, before_col].set_title(f"t={t_star}\nbefore pert.", fontsize=7,
+                                   color="saddlebrown")
+    axes[0, intv_col].set_title(f"t*={t_star}\nPERTURBED ↓", fontsize=7,
                                  fontweight="bold", color="darkred")
-
     for offset, s in enumerate(post_show):
-        col = intv_col + 1 + offset
-        axes[0, col].set_title(f"t*+{s}", fontsize=7, color="darkorange")
+        axes[0, intv_col + 1 + offset].set_title(f"t*+{s}", fontsize=7,
+                                                   color="darkorange")
 
-    # ── Draw each row ─────────────────────────────────────────
+    # ── Draw each row ──────────────────────────────────────────
     def draw_row(row: int, pre_frames: np.ndarray, post_frames: np.ndarray,
                  label: str) -> None:
-        ax = axes[row, 0]
-        ax.set_ylabel(label, fontsize=9, fontweight="bold",
-                      rotation=0, labelpad=65, va="center")
+        axes[row, 0].set_ylabel(label, fontsize=9, fontweight="bold",
+                                rotation=0, labelpad=65, va="center")
 
-        # Pre-intervention frames
+        # Pre frames
         for col, s in enumerate(pre_show):
-            img = np.clip(pre_frames[min(s, len(pre_frames) - 1)], 0, 1)
-            axes[row, col].imshow(img, cmap="gray", vmin=0, vmax=1)
+            axes[row, col].imshow(
+                np.clip(pre_frames[min(s, len(pre_frames) - 1)], 0, 1),
+                cmap="gray", vmin=0, vmax=1)
             axes[row, col].axis("off")
 
-        # Intervened frame — highlight with red border
+        # Frame right before perturbation (gt_pre[t_star] for GT row;
+        # model_pres[m][t_star] for model rows — shows where model was before intervention)
+        axes[row, before_col].imshow(
+            np.clip(pre_frames[min(t_star, len(pre_frames) - 1)], 0, 1),
+            cmap="gray", vmin=0, vmax=1)
+        axes[row, before_col].axis("off")
+
+        # Perturbed frame — same for all rows (shared canonical intervention)
         ax_intv = axes[row, intv_col]
         ax_intv.imshow(np.clip(intervened, 0, 1), cmap="gray", vmin=0, vmax=1)
         ax_intv.axis("off")
         for spine in ax_intv.spines.values():
             spine.set_visible(True)
             spine.set_edgecolor("darkred")
-            spine.set_linewidth(2)
+            spine.set_linewidth(2.5)
 
-        # Post-intervention frames
+        # Post frames
         for offset, s in enumerate(post_show):
-            col = intv_col + 1 + offset
-            img = np.clip(post_frames[min(s, len(post_frames) - 1)], 0, 1)
-            axes[row, col].imshow(img, cmap="gray", vmin=0, vmax=1)
-            axes[row, col].axis("off")
+            axes[row, intv_col + 1 + offset].imshow(
+                np.clip(post_frames[min(s, len(post_frames) - 1)], 0, 1),
+                cmap="gray", vmin=0, vmax=1)
+            axes[row, intv_col + 1 + offset].axis("off")
 
     for row, model_name in enumerate(models):
         draw_row(row, model_pres[model_name], model_posts[model_name],
@@ -197,18 +208,18 @@ def plot_frame_snapshots(intv_name: str,
 
     plt.tight_layout()
 
-    # Vertical separator line between pre and intervention columns
-    if intv_col > 0:
-        try:
-            fig.canvas.draw()
-            sep_x = (axes[0, intv_col - 1].get_position().x1 +
-                     axes[0, intv_col].get_position().x0) / 2
-            fig.add_artist(plt.Line2D([sep_x, sep_x], [0.02, 0.96],
-                                      transform=fig.transFigure,
-                                      color="darkred", linewidth=1.5, linestyle="--",
-                                      alpha=0.6))
-        except Exception:
-            pass
+    # Red dashed separator between "before" and "perturbed" columns
+    try:
+        fig.canvas.draw()
+        sep_x = (axes[0, before_col].get_position().x1 +
+                 axes[0, intv_col].get_position().x0) / 2
+        fig.add_artist(plt.Line2D([sep_x, sep_x], [0.02, 0.96],
+                                  transform=fig.transFigure,
+                                  color="darkred", linewidth=1.5, linestyle="--",
+                                  alpha=0.7))
+    except Exception:
+        pass
+
     out = out_dir / f"snapshots_{intv_name}.png"
     plt.savefig(out, dpi=150, bbox_inches="tight")
     plt.close()
@@ -241,11 +252,12 @@ def plot_intervention(intv_name: str, results: dict, n_steps: int, t_star: int,
 
 def save_intervention_gif(intv_name: str, best: dict, t_star: int,
                           n_steps: int, out_dir: Path) -> None:
-    """Animated GIF: full timeline per row — pre-rollout → INTERVENTION → post-rollout.
+    """Animated GIF: models side by side as columns, time animated frame by frame.
 
-    'best' dict: model_pres, model_posts, gt_pre, gt_post, intervened
-    Sequence:  model_pres[0..t_star]  +  model_posts[0..n_steps]
-    index t_star+1 in that sequence = the intervened frame (model_posts[0]).
+    Layout (left → right): Pixel-CNN | Pixel-ViT | Patch-JEPA | Lenia GT
+    Each GIF frame = one time step.
+    pre-rollout (blue label) → INTERVENTION pause (red border) → post-rollout (orange).
+    All models + GT start from the SAME perturbed frame (shared canonical intervention).
     """
     try:
         from PIL import Image, ImageDraw
@@ -254,28 +266,30 @@ def save_intervention_gif(intv_name: str, best: dict, t_star: int,
         return
 
     models = list(best["model_posts"].keys())
-    row_labels = list(models) + ["Lenia GT"]
+    col_labels = list(models) + ["Lenia GT"]
+    n_cols = len(col_labels)
 
     scale = 4
-    frame0 = best["intervened"]
-    H, W = frame0.shape
-    label_w = 90
-    top_h = 18          # strip for phase text
+    H, W = best["intervened"].shape
+    gap = 3
+    top_h = 18
+    bot_h = 14
     panel_h = H * scale
     panel_w = W * scale
-    img_w = label_w + panel_w
-    img_h = top_h + len(row_labels) * panel_h
+    img_w = n_cols * panel_w + (n_cols - 1) * gap
+    img_h = top_h + panel_h + bot_h
 
     def to_gray_rgb(f: np.ndarray) -> np.ndarray:
         g = (np.clip(f, 0, 1) * 255).astype(np.uint8)
         return np.stack([g, g, g], axis=-1)
 
+    # Full frame sequences: pre-rollout concat post-rollout (post[0] = intervened frame)
     seqs: dict[str, list] = {}
     for m in models:
         seqs[m] = list(best["model_pres"][m]) + list(best["model_posts"][m])
     seqs["Lenia GT"] = list(best["gt_pre"]) + list(best["gt_post"])
 
-    intv_idx = t_star + 1   # index of the intervened frame in every sequence
+    intv_idx = t_star + 1   # index where the perturbed frame appears in every sequence
     total = min(len(s) for s in seqs.values())
 
     gif_imgs = []
@@ -283,37 +297,35 @@ def save_intervention_gif(intv_name: str, best: dict, t_star: int,
         img = Image.new("RGB", (img_w, img_h), (15, 15, 15))
         draw = ImageDraw.Draw(img)
 
+        is_intv = (fi == intv_idx)
         if fi <= t_star:
-            phase, pcol = f"pre-rollout   t={fi}", (100, 180, 255)
-        elif fi == intv_idx:
+            phase, pcol = f"pre-rollout  t={fi}", (100, 180, 255)
+        elif is_intv:
             phase, pcol = f"INTERVENTION  t*={t_star}", (255, 60, 60)
         else:
             phase, pcol = f"post-interv.  t*+{fi - intv_idx}", (255, 180, 50)
 
-        draw.text((label_w + 3, 2), phase, fill=pcol)
+        draw.text((4, 2), phase, fill=pcol)
 
-        for row, label in enumerate(row_labels):
+        for ci, label in enumerate(col_labels):
+            x0 = ci * (panel_w + gap)
             seq = seqs[label]
             frame = seq[min(fi, len(seq) - 1)]
-            panel = Image.fromarray(to_gray_rgb(frame)).resize(
-                (panel_w, panel_h), Image.NEAREST
-            )
-            y0 = top_h + row * panel_h
-            img.paste(panel, (label_w, y0))
-            draw.text((2, y0 + panel_h // 2 - 6), label, fill=(200, 200, 200))
-            if row > 0:
-                draw.line([(0, y0), (img_w, y0)], fill=(50, 50, 50), width=1)
-
-        if fi == intv_idx:
-            draw.rectangle([label_w, top_h, img_w - 1, img_h - 1],
-                           outline=(220, 30, 30), width=3)
+            panel_img = Image.fromarray(to_gray_rgb(frame)).resize(
+                (panel_w, panel_h), Image.NEAREST)
+            img.paste(panel_img, (x0, top_h))
+            short = label.replace("Lenia GT", "GT").replace("Pixel-", "Px-")
+            draw.text((x0 + 2, top_h + panel_h + 1), short, fill=(180, 180, 180))
+            if is_intv:
+                draw.rectangle([x0, top_h, x0 + panel_w - 1, top_h + panel_h - 1],
+                               outline=(220, 30, 30), width=3)
 
         gif_imgs.append(img)
 
     durations = [100] * total
-    if 0 <= t_star < total:       durations[t_star]      = 400   # pause before perturb
-    if 0 <= intv_idx < total:     durations[intv_idx]    = 700   # long pause at intervention
-    if 0 <= intv_idx + 1 < total: durations[intv_idx + 1] = 300  # pause first post frame
+    if 0 <= t_star < total:        durations[t_star]       = 400
+    if 0 <= intv_idx < total:      durations[intv_idx]     = 700
+    if 0 <= intv_idx + 1 < total:  durations[intv_idx + 1] = 300
 
     out = out_dir / f"gif_{intv_name}.gif"
     gif_imgs[0].save(out, save_all=True, append_images=gif_imgs[1:],
