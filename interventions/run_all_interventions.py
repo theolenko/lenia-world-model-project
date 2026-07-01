@@ -404,21 +404,23 @@ def main():
         for traj_i in range(args.n_traj):
             t0 = raw[traj_i, 0]  # first frame of trajectory — same as run_intervention.py
 
+            # Run Lenia GT for t_star steps to get the canonical t* frame.
+            # The intervention is applied to this shared GT frame so that all
+            # models start from the SAME perturbed state and compare against
+            # the SAME Lenia GT continuation.
             gt_pre = lenia_rollout(t0, args.t_star, fK)
+            gt_pre_frame = gt_pre[-1]   # Lenia state at t* — shared across all models
+            intervened = INTERVENTIONS[intv_name](gt_pre_frame, rng=rng)
+            gt_post = lenia_rollout(intervened, args.n_steps, fK)
+
             traj_model_pres: dict = {}
             traj_model_posts: dict = {}
             traj_mse_sum = 0.0
-            traj_intervened = None
-            traj_gt_post = None
 
             for model_name in loaded:
                 pre_rollout = model_rollout(model_name, t0, args.t_star, loaded, device)
-                pre_frame = pre_rollout[-1]
-
-                intervened = INTERVENTIONS[intv_name](pre_frame, rng=rng)
 
                 model_post = model_rollout(model_name, intervened, args.n_steps, loaded, device)
-                gt_post = lenia_rollout(intervened, args.n_steps, fK)
 
                 # index 0 is the intervened frame itself — skip it
                 mses = mse_per_step(model_post[1:], gt_post[1:])
@@ -427,8 +429,6 @@ def main():
 
                 traj_model_pres[model_name] = pre_rollout
                 traj_model_posts[model_name] = model_post
-                traj_intervened = intervened
-                traj_gt_post = gt_post
 
             # Keep frames from the trajectory where models track Lenia best
             traj_score = traj_mse_sum / max(len(loaded), 1)
@@ -438,8 +438,8 @@ def main():
                     "model_pres": traj_model_pres,
                     "model_posts": traj_model_posts,
                     "gt_pre": gt_pre,
-                    "gt_post": traj_gt_post,
-                    "intervened": traj_intervened,
+                    "gt_post": gt_post,
+                    "intervened": intervened,
                 }
 
         # Expose last traj vars for snapshot plot (keeps existing plot behaviour)
