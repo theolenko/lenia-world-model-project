@@ -417,6 +417,16 @@ python interventions/run_all_interventions.py --n-traj 5 --t-star 10 --n-steps 3
 
 Results and plots: `experiments/intervention_results/`
 
+**Output files per intervention:**
+- `intervention_{name}.png` — MSE curve (model vs. Lenia GT) over steps after perturbation
+- `snapshots_{name}.png` — Full timeline grid: pre-rollout → perturbation → post-rollout, one row per model + Lenia GT
+- `gif_{name}.gif` — Animated version of the same timeline (best trajectory selected automatically)
+
+**Eval output:**
+- `gif_rollout_all_models.gif` — Autoregressive rollout for all models + GT, side by side
+
+All plots use a **grayscale colormap** matching the single-channel Lenia frames.
+
 ---
 
 ## Branching Strategy
