@@ -237,6 +237,50 @@ COLORS = {
 }
 
 
+def plot_one_step_grid(loaded: dict, dataset, out_dir: Path, n: int = 6) -> None:
+    """Input t | Predicted t+1 | Ground truth t+1 — one row per model."""
+    from torch.utils.data import DataLoader as _DL
+    batch = next(iter(_DL(dataset, batch_size=n, shuffle=True, num_workers=0)))
+    ft, ft1 = batch[0][:n], batch[1][:n]
+
+    n_models = len(loaded)
+    fig, axes = plt.subplots(n_models, 3 * n, figsize=(3 * n, 2.5 * n_models))
+    fig.suptitle("One-step: Input t  |  Predicted t+1  |  Ground truth t+1", fontsize=10)
+    if n_models == 1:
+        axes = axes[np.newaxis, :]
+
+    for row, (model_name, model_obj) in enumerate(loaded.items()):
+        device = next(iter(model_obj.parameters() if not isinstance(model_obj, tuple)
+                           else model_obj[0].parameters())).device
+        ft_d, ft1_d = ft.to(device), ft1.to(device)
+        with torch.no_grad():
+            if isinstance(model_obj, tuple):   # Patch-JEPA
+                m, dec = model_obj
+                z = m.online_encoder(ft_d)
+                pred = dec(m.predictor(z))
+            else:
+                pred = model_obj(ft_d)
+
+        inp_np  = ft_d.cpu().numpy()[:, 0]
+        pred_np = pred.cpu().numpy()[:, 0]
+        gt_np   = ft1_d.cpu().numpy()[:, 0]
+
+        for col in range(n):
+            for offset, img in enumerate([inp_np[col], pred_np[col], gt_np[col]]):
+                ax = axes[row, col * 3 + offset]
+                ax.imshow(img, cmap="viridis", vmin=0, vmax=1)
+                ax.axis("off")
+                if row == 0 and col == 0:
+                    ax.set_title(["t", "pred t+1", "GT t+1"][offset], fontsize=7)
+        axes[row, 0].set_ylabel(model_name, fontsize=8)
+
+    plt.tight_layout()
+    out = out_dir / "one_step_grid.png"
+    plt.savefig(out, dpi=150, bbox_inches="tight")
+    plt.close()
+    print(f"  Saved: {out}")
+
+
 def plot_one_step_comparison(results: dict, out_dir: Path) -> None:
     pixel_models = {k: v for k, v in results.items() if v.get("type") == "pixel"}
     if not pixel_models: return
@@ -416,6 +460,7 @@ def main():
         r = one_step_results[name]
         print(f"  {name}: MSE={r['mse_mean']:.5f}  PSNR={r['psnr_mean']:.1f}dB  SSIM={r['ssim_mean']:.4f}")
 
+    plot_one_step_grid(loaded, dataset, OUT_DIR)
     plot_one_step_comparison(one_step_results, OUT_DIR)
 
     # 2. Multi-step rollout

@@ -21,6 +21,7 @@ import torch
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from interventions.metrics import mse_per_step, time_to_divergence
+DIVERGENCE_THRESHOLD = 0.05
 from interventions.perturbations import INTERVENTIONS
 from models.decoder import PatchDecoder
 from models.world_model import PatchJEPAWorldModel, PixelWorldModel
@@ -115,6 +116,41 @@ def model_rollout(model_name: str, start_frame: np.ndarray,
 
 # ── Plotting ───────────────────────────────────────────────────────────────────
 
+def plot_frame_snapshots(intv_name: str, model_posts: dict, gt_post: np.ndarray,
+                         intervened: np.ndarray, n_steps: int, out_dir: Path) -> None:
+    """Model predictions vs Lenia GT at key steps — one row per model + one GT row."""
+    vis_steps = sorted({0, 1, n_steps // 2, n_steps})
+    models = list(model_posts.keys())
+    n_rows = len(models) + 1  # models + GT row
+
+    fig, axes = plt.subplots(n_rows, len(vis_steps),
+                             figsize=(3 * len(vis_steps), 2.5 * n_rows))
+    fig.suptitle(f"Intervention: {intv_name} — frame snapshots", fontsize=10)
+
+    for col, s in enumerate(vis_steps):
+        axes[0, col].set_title(f"step {s}", fontsize=8)
+
+    for row, model_name in enumerate(models):
+        frames = model_posts[model_name]
+        axes[row, 0].set_ylabel(model_name, fontsize=8)
+        for col, s in enumerate(vis_steps):
+            img = frames[min(s, len(frames) - 1)]
+            axes[row, col].imshow(img, cmap="viridis", vmin=0, vmax=1)
+            axes[row, col].axis("off")
+
+    axes[-1, 0].set_ylabel("Lenia GT", fontsize=8)
+    for col, s in enumerate(vis_steps):
+        img = gt_post[min(s, len(gt_post) - 1)]
+        axes[-1, col].imshow(img, cmap="viridis", vmin=0, vmax=1)
+        axes[-1, col].axis("off")
+
+    plt.tight_layout()
+    out = out_dir / f"snapshots_{intv_name}.png"
+    plt.savefig(out, dpi=150, bbox_inches="tight")
+    plt.close()
+    print(f"  Saved: {out}")
+
+
 def plot_intervention(intv_name: str, results: dict, n_steps: int, out_dir: Path) -> None:
     fig, ax = plt.subplots(figsize=(8, 4))
     steps = np.arange(1, n_steps + 1)
@@ -208,9 +244,12 @@ def main():
         print(f"\n── Intervention: {intv_name} ────────────────────────────")
 
         accum = {m: [] for m in loaded}
+        last_model_posts = {}  # keep last traj's frames for snapshot plot
+        last_gt_post = None
+        last_intervened = None
 
         for traj_i in range(args.n_traj):
-            t0 = raw[traj_i, 0]  # first frame of trajectory — same as Alicia's traj[0]
+            t0 = raw[traj_i, 0]  # first frame of trajectory — same as run_intervention.py
 
             for model_name in loaded:
                 pre_rollout = model_rollout(model_name, t0, args.t_star, loaded, device)
@@ -225,17 +264,27 @@ def main():
                 mses = mse_per_step(model_post[1:], gt_post[1:])
                 accum[model_name].append(mses)
 
-        # Average over trajectories
+                last_model_posts[model_name] = model_post
+                last_gt_post = gt_post
+                last_intervened = intervened
+
+        # Average over trajectories, report divergence step
         intv_results = {}
         for model_name in loaded:
             mean_mses = list(np.mean(accum[model_name], axis=0))
             intv_results[model_name] = mean_mses
             mean_10 = float(np.mean(mean_mses[:10]))
             table[model_name][intv_name] = mean_10
+            exceed = [i for i, v in enumerate(mean_mses) if v > DIVERGENCE_THRESHOLD]
+            div_str = f"step {exceed[0] + 1}" if exceed else "never"
             print(f"  {model_name}: mean MSE steps 1–10 = {mean_10:.5f}  "
-                  f"step1={mean_mses[0]:.5f}  step{args.n_steps}={mean_mses[-1]:.5f}")
+                  f"step1={mean_mses[0]:.5f}  "
+                  f"diverges (>{DIVERGENCE_THRESHOLD}) at {div_str}")
 
         plot_intervention(intv_name, intv_results, args.n_steps, OUT_DIR)
+        if last_gt_post is not None:
+            plot_frame_snapshots(intv_name, last_model_posts, last_gt_post,
+                                 last_intervened, args.n_steps, OUT_DIR)
 
         summary_lines.append(f"── {intv_name} ──")
         for model_name, mses in intv_results.items():
