@@ -18,11 +18,11 @@ for a fair comparison across architectures.
 | Pixel-ViT | 6-layer ViT, patch_size=8 (embed_dim=256) | Next-frame MSE in pixel space | CNN decoder |
 | Patch-JEPA | 6-layer ViT, pool=False (embed_dim=128) | JEPA: predict next patch embeddings (EMA target) | PatchDecoder (trained separately) |
 
-**PatchDecoder training note:** The decoder is trained on a 50/50 mix of clean encoder embeddings
-and predictor outputs (`predictor(encoder(frame_t))`). This closes the train/inference distribution
-gap — at inference the decoder always receives predictor outputs, so training only on clean frames
-leads to degraded visual quality. The MSE loss is kept as a known limitation; perceptual/SSIM
-losses would further improve sharpness but are not used (see limitations).
+**PatchDecoder training note:** The decoder is trained exclusively on predictor outputs
+(`predictor(encoder(frame_t))`), not on clean encoder embeddings. At inference the decoder
+always receives predictor outputs, so training on encoder embeddings directly would expose it
+to a distribution it never sees at test time. The MSE loss is kept as a known limitation;
+perceptual/SSIM losses would further improve sharpness but are not used (see limitations).
 
 ---
 

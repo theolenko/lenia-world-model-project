@@ -133,13 +133,11 @@ Same JEPA principle but with **ViTEncoder(pool=False)**, keeping the 64 patch em
 - **Target encoder** (EMA) encodes `frame_t+1` → `(B, 64, embed_dim)` (no grad)
 - Loss: MSE over all patch positions + VICReg on flattened `(B×64, embed_dim)`
 
-After JEPA training, a **PatchDecoder** is trained separately on a mix of encoder and predictor outputs:
+After JEPA training, a **PatchDecoder** is trained separately on predictor outputs:
 ```
-frame_t → frozen ViTEncoder → z_enc  ─────────────────────────────┐
-                                                                   ↓  PatchDecoder → frame_t
-frame_t → frozen ViTEncoder → z_enc → frozen Predictor → z_pred ──┘
+frame_t → frozen ViTEncoder → z_enc → frozen Predictor → z_pred → PatchDecoder → frame_t
 ```
-Training on **both** `z_enc` and `predictor(z_enc)` closes the train/inference distribution gap: at inference the decoder always receives predictor outputs, so training exclusively on clean encoder embeddings causes quality loss.
+The decoder is trained on `predictor(encoder(frame_t))` — **not** on clean encoder embeddings. At inference the decoder always receives predictor outputs, so training on encoder embeddings directly would expose it to a distribution it never sees at test time.
 
 This enables true autoregressive rollout at inference:
 ```
@@ -358,9 +356,9 @@ ssh <unilogin>@login01.sc.uni-leipzig.de "cd ~/lenia-world-model && \
 | Pixel-ViT    | ~0.022         | 100    | Pixel MSE — ViT encoder, same task         |
 | JEPA-CNN     | ~0.049         | 100    | Embedding MSE + VICReg (not comparable)    |
 | Patch-JEPA   | 0.01340        | 100    | Embedding MSE over 64 patches + VICReg     |
-| PatchDecoder | —              | 100    | Trained on 50% encoder + 50% predictor embs — see note |
+| PatchDecoder | —              | 100    | Trained on predictor embeddings exclusively |
 
-> Note: JEPA and Pixel model losses are measured in different spaces (embedding vs pixel MSE) and are **not directly comparable**. PatchDecoder is trained on a 50/50 mix of encoder and predictor outputs to match the inference distribution.
+> Note: JEPA and Pixel model losses are measured in different spaces (embedding vs pixel MSE) and are **not directly comparable**. PatchDecoder is trained on `predictor(encoder(frame_t))` to match the exact distribution seen at inference.
 
 ### Pixel-space evaluation (latest, job 24907728)
 
