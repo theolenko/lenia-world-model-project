@@ -116,55 +116,208 @@ def model_rollout(model_name: str, start_frame: np.ndarray,
 
 # ── Plotting ───────────────────────────────────────────────────────────────────
 
-def plot_frame_snapshots(intv_name: str, model_posts: dict, gt_post: np.ndarray,
-                         intervened: np.ndarray, n_steps: int, out_dir: Path) -> None:
-    """Model predictions vs Lenia GT at key steps — one row per model + one GT row."""
-    vis_steps = sorted({0, 1, n_steps // 2, n_steps})
+def plot_frame_snapshots(intv_name: str,
+                         model_pres: dict, model_posts: dict,
+                         gt_pre: np.ndarray, gt_post: np.ndarray,
+                         intervened: np.ndarray, n_steps: int, t_star: int,
+                         out_dir: Path) -> None:
+    """Full timeline per row: pre-rollout → INTERVENTION → post-rollout.
+
+    Each row is one model (or Lenia GT simulator).
+    Left section:  frames before the intervention (t=0, t=t_star/2, t=t_star).
+    Middle:        the intervened/perturbed frame (t*).
+    Right section: frames after the intervention (+1, +n//4, +n//2, +n steps).
+    """
+    pre_show = sorted({0, t_star // 2, t_star - 1}) if t_star > 1 else [0]
+    post_show = sorted({1, max(2, n_steps // 4), n_steps // 2, n_steps})
+
     models = list(model_posts.keys())
-    n_rows = len(models) + 1  # models + GT row
+    row_labels = [f"{m}\n(model)" for m in models] + ["Lenia GT\n(simulator)"]
+    n_rows = len(row_labels)
+    # cols: pre-cols | intervened col | post-cols
+    n_cols = len(pre_show) + 1 + len(post_show)
 
-    fig, axes = plt.subplots(n_rows, len(vis_steps),
-                             figsize=(3 * len(vis_steps), 2.5 * n_rows))
-    fig.suptitle(f"Intervention: {intv_name} — frame snapshots", fontsize=10)
+    fig, axes = plt.subplots(n_rows, n_cols,
+                             figsize=(2.6 * n_cols, 2.6 * n_rows))
 
-    for col, s in enumerate(vis_steps):
-        axes[0, col].set_title(f"step {s}", fontsize=8)
+    fig.suptitle(
+        f"Intervention: {intv_name}  —  full timeline\n"
+        f"← {t_star} steps autonomous rollout  |  INTERVENTION ↓  |  {n_steps} steps after →\n"
+        f"Model rows: world-model predictions.  Lenia GT: real simulator.",
+        fontsize=9, y=1.02
+    )
 
-    for row, model_name in enumerate(models):
-        frames = model_posts[model_name]
-        axes[row, 0].set_ylabel(model_name, fontsize=8)
-        for col, s in enumerate(vis_steps):
-            img = frames[min(s, len(frames) - 1)]
-            axes[row, col].imshow(img, cmap="viridis", vmin=0, vmax=1)
+    # ── Column headers ────────────────────────────────────────
+    for col, s in enumerate(pre_show):
+        lbl = f"t=0\n(start)" if s == 0 else f"t={s}"
+        axes[0, col].set_title(lbl, fontsize=7, color="steelblue")
+
+    intv_col = len(pre_show)
+    axes[0, intv_col].set_title(f"t*={t_star}\nINTERVENTION", fontsize=7,
+                                 fontweight="bold", color="darkred")
+
+    for offset, s in enumerate(post_show):
+        col = intv_col + 1 + offset
+        axes[0, col].set_title(f"t*+{s}", fontsize=7, color="darkorange")
+
+    # ── Draw each row ─────────────────────────────────────────
+    def draw_row(row: int, pre_frames: np.ndarray, post_frames: np.ndarray,
+                 label: str) -> None:
+        ax = axes[row, 0]
+        ax.set_ylabel(label, fontsize=9, fontweight="bold",
+                      rotation=0, labelpad=65, va="center")
+
+        # Pre-intervention frames
+        for col, s in enumerate(pre_show):
+            img = np.clip(pre_frames[min(s, len(pre_frames) - 1)], 0, 1)
+            axes[row, col].imshow(img, cmap="gray", vmin=0, vmax=1)
             axes[row, col].axis("off")
 
-    axes[-1, 0].set_ylabel("Lenia GT", fontsize=8)
-    for col, s in enumerate(vis_steps):
-        img = gt_post[min(s, len(gt_post) - 1)]
-        axes[-1, col].imshow(img, cmap="viridis", vmin=0, vmax=1)
-        axes[-1, col].axis("off")
+        # Intervened frame — highlight with red border
+        ax_intv = axes[row, intv_col]
+        ax_intv.imshow(np.clip(intervened, 0, 1), cmap="gray", vmin=0, vmax=1)
+        ax_intv.axis("off")
+        for spine in ax_intv.spines.values():
+            spine.set_visible(True)
+            spine.set_edgecolor("darkred")
+            spine.set_linewidth(2)
+
+        # Post-intervention frames
+        for offset, s in enumerate(post_show):
+            col = intv_col + 1 + offset
+            img = np.clip(post_frames[min(s, len(post_frames) - 1)], 0, 1)
+            axes[row, col].imshow(img, cmap="gray", vmin=0, vmax=1)
+            axes[row, col].axis("off")
+
+    for row, model_name in enumerate(models):
+        draw_row(row, model_pres[model_name], model_posts[model_name],
+                 f"{model_name}\n(model)")
+
+    draw_row(len(models), gt_pre, gt_post, "Lenia GT\n(simulator)")
 
     plt.tight_layout()
+
+    # Vertical separator line between pre and intervention columns
+    if intv_col > 0:
+        try:
+            fig.canvas.draw()
+            sep_x = (axes[0, intv_col - 1].get_position().x1 +
+                     axes[0, intv_col].get_position().x0) / 2
+            fig.add_artist(plt.Line2D([sep_x, sep_x], [0.02, 0.96],
+                                      transform=fig.transFigure,
+                                      color="darkred", linewidth=1.5, linestyle="--",
+                                      alpha=0.6))
+        except Exception:
+            pass
     out = out_dir / f"snapshots_{intv_name}.png"
     plt.savefig(out, dpi=150, bbox_inches="tight")
     plt.close()
     print(f"  Saved: {out}")
 
 
-def plot_intervention(intv_name: str, results: dict, n_steps: int, out_dir: Path) -> None:
+def plot_intervention(intv_name: str, results: dict, n_steps: int, t_star: int,
+                      out_dir: Path) -> None:
     fig, ax = plt.subplots(figsize=(8, 4))
     steps = np.arange(1, n_steps + 1)
     for name, mses in results.items():
         ax.plot(steps[:len(mses)], mses, label=name, color=COLORS[name], linewidth=2)
-    ax.set_title(f"Intervention: {intv_name} — model vs. Lenia ground truth")
-    ax.set_xlabel("Steps after intervention (t*)")
-    ax.set_ylabel("Pixel MSE")
+    ax.set_title(
+        f"Intervention: {intv_name}\n"
+        f"Each model rolled {t_star} steps autonomously, then the frame was perturbed.\n"
+        f"Plot shows pixel MSE between model prediction and Lenia simulator "
+        f"for each step after the perturbation.",
+        fontsize=9
+    )
+    ax.set_xlabel(f"Steps after perturbation at t*={t_star}")
+    ax.set_ylabel("Pixel MSE  (model prediction vs. Lenia GT)")
     ax.legend()
     ax.grid(alpha=0.3)
     fig.tight_layout()
     out = out_dir / f"intervention_{intv_name}.png"
     fig.savefig(out, dpi=150, bbox_inches="tight")
     plt.close(fig)
+    print(f"  Saved: {out}")
+
+
+def save_intervention_gif(intv_name: str, best: dict, t_star: int,
+                          n_steps: int, out_dir: Path) -> None:
+    """Animated GIF: full timeline per row — pre-rollout → INTERVENTION → post-rollout.
+
+    'best' dict: model_pres, model_posts, gt_pre, gt_post, intervened
+    Sequence:  model_pres[0..t_star]  +  model_posts[0..n_steps]
+    index t_star+1 in that sequence = the intervened frame (model_posts[0]).
+    """
+    try:
+        from PIL import Image, ImageDraw
+    except ImportError:
+        print(f"  [skip gif] install pillow for GIF output")
+        return
+
+    models = list(best["model_posts"].keys())
+    row_labels = list(models) + ["Lenia GT"]
+
+    scale = 4
+    frame0 = best["intervened"]
+    H, W = frame0.shape
+    label_w = 90
+    top_h = 18          # strip for phase text
+    panel_h = H * scale
+    panel_w = W * scale
+    img_w = label_w + panel_w
+    img_h = top_h + len(row_labels) * panel_h
+
+    def to_gray_rgb(f: np.ndarray) -> np.ndarray:
+        g = (np.clip(f, 0, 1) * 255).astype(np.uint8)
+        return np.stack([g, g, g], axis=-1)
+
+    seqs: dict[str, list] = {}
+    for m in models:
+        seqs[m] = list(best["model_pres"][m]) + list(best["model_posts"][m])
+    seqs["Lenia GT"] = list(best["gt_pre"]) + list(best["gt_post"])
+
+    intv_idx = t_star + 1   # index of the intervened frame in every sequence
+    total = min(len(s) for s in seqs.values())
+
+    gif_imgs = []
+    for fi in range(total):
+        img = Image.new("RGB", (img_w, img_h), (15, 15, 15))
+        draw = ImageDraw.Draw(img)
+
+        if fi <= t_star:
+            phase, pcol = f"pre-rollout   t={fi}", (100, 180, 255)
+        elif fi == intv_idx:
+            phase, pcol = f"INTERVENTION  t*={t_star}", (255, 60, 60)
+        else:
+            phase, pcol = f"post-interv.  t*+{fi - intv_idx}", (255, 180, 50)
+
+        draw.text((label_w + 3, 2), phase, fill=pcol)
+
+        for row, label in enumerate(row_labels):
+            seq = seqs[label]
+            frame = seq[min(fi, len(seq) - 1)]
+            panel = Image.fromarray(to_gray_rgb(frame)).resize(
+                (panel_w, panel_h), Image.NEAREST
+            )
+            y0 = top_h + row * panel_h
+            img.paste(panel, (label_w, y0))
+            draw.text((2, y0 + panel_h // 2 - 6), label, fill=(200, 200, 200))
+            if row > 0:
+                draw.line([(0, y0), (img_w, y0)], fill=(50, 50, 50), width=1)
+
+        if fi == intv_idx:
+            draw.rectangle([label_w, top_h, img_w - 1, img_h - 1],
+                           outline=(220, 30, 30), width=3)
+
+        gif_imgs.append(img)
+
+    durations = [100] * total
+    if 0 <= t_star < total:       durations[t_star]      = 400   # pause before perturb
+    if 0 <= intv_idx < total:     durations[intv_idx]    = 700   # long pause at intervention
+    if 0 <= intv_idx + 1 < total: durations[intv_idx + 1] = 300  # pause first post frame
+
+    out = out_dir / f"gif_{intv_name}.gif"
+    gif_imgs[0].save(out, save_all=True, append_images=gif_imgs[1:],
+                     duration=durations, loop=0)
     print(f"  Saved: {out}")
 
 
@@ -244,12 +397,19 @@ def main():
         print(f"\n── Intervention: {intv_name} ────────────────────────────")
 
         accum = {m: [] for m in loaded}
-        last_model_posts = {}  # keep last traj's frames for snapshot plot
-        last_gt_post = None
-        last_intervened = None
+        # best_traj: trajectory with lowest mean post-intervention MSE (cleanest GIF)
+        best_traj_score = float("inf")
+        best_traj: dict = {}
 
         for traj_i in range(args.n_traj):
             t0 = raw[traj_i, 0]  # first frame of trajectory — same as run_intervention.py
+
+            gt_pre = lenia_rollout(t0, args.t_star, fK)
+            traj_model_pres: dict = {}
+            traj_model_posts: dict = {}
+            traj_mse_sum = 0.0
+            traj_intervened = None
+            traj_gt_post = None
 
             for model_name in loaded:
                 pre_rollout = model_rollout(model_name, t0, args.t_star, loaded, device)
@@ -263,10 +423,31 @@ def main():
                 # index 0 is the intervened frame itself — skip it
                 mses = mse_per_step(model_post[1:], gt_post[1:])
                 accum[model_name].append(mses)
+                traj_mse_sum += float(np.mean(mses))
 
-                last_model_posts[model_name] = model_post
-                last_gt_post = gt_post
-                last_intervened = intervened
+                traj_model_pres[model_name] = pre_rollout
+                traj_model_posts[model_name] = model_post
+                traj_intervened = intervened
+                traj_gt_post = gt_post
+
+            # Keep frames from the trajectory where models track Lenia best
+            traj_score = traj_mse_sum / max(len(loaded), 1)
+            if traj_score < best_traj_score:
+                best_traj_score = traj_score
+                best_traj = {
+                    "model_pres": traj_model_pres,
+                    "model_posts": traj_model_posts,
+                    "gt_pre": gt_pre,
+                    "gt_post": traj_gt_post,
+                    "intervened": traj_intervened,
+                }
+
+        # Expose last traj vars for snapshot plot (keeps existing plot behaviour)
+        last_model_pres  = best_traj.get("model_pres", {})
+        last_model_posts = best_traj.get("model_posts", {})
+        last_gt_pre      = best_traj.get("gt_pre")
+        last_gt_post     = best_traj.get("gt_post")
+        last_intervened  = best_traj.get("intervened")
 
         # Average over trajectories, report divergence step
         intv_results = {}
@@ -281,10 +462,13 @@ def main():
                   f"step1={mean_mses[0]:.5f}  "
                   f"diverges (>{DIVERGENCE_THRESHOLD}) at {div_str}")
 
-        plot_intervention(intv_name, intv_results, args.n_steps, OUT_DIR)
+        plot_intervention(intv_name, intv_results, args.n_steps, args.t_star, OUT_DIR)
         if last_gt_post is not None:
-            plot_frame_snapshots(intv_name, last_model_posts, last_gt_post,
-                                 last_intervened, args.n_steps, OUT_DIR)
+            plot_frame_snapshots(intv_name, last_model_pres, last_model_posts,
+                                 last_gt_pre, last_gt_post,
+                                 last_intervened, args.n_steps, args.t_star, OUT_DIR)
+            save_intervention_gif(intv_name, best_traj, args.t_star,
+                                  args.n_steps, OUT_DIR)
 
         summary_lines.append(f"── {intv_name} ──")
         for model_name, mses in intv_results.items():

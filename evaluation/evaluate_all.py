@@ -268,7 +268,7 @@ def plot_one_step_grid(loaded: dict, dataset, out_dir: Path, n: int = 6) -> None
         for col in range(n):
             for offset, img in enumerate([inp_np[col], pred_np[col], gt_np[col]]):
                 ax = axes[row, col * 3 + offset]
-                ax.imshow(img, cmap="viridis", vmin=0, vmax=1)
+                ax.imshow(img, cmap="gray", vmin=0, vmax=1)
                 ax.axis("off")
                 if row == 0 and col == 0:
                     ax.set_title(["t", "pred t+1", "GT t+1"][offset], fontsize=7)
@@ -345,6 +345,99 @@ def plot_ood_comparison(ood_results: dict, out_dir: Path) -> None:
     plt.savefig(out_dir / "ood_robustness_comparison.png", dpi=150, bbox_inches="tight")
     plt.close()
     print(f"  Saved: {out_dir / 'ood_robustness_comparison.png'}")
+
+
+@torch.no_grad()
+def collect_rollout_frames(model_name: str, traj: torch.Tensor,
+                           rollout_steps: int, models: dict) -> np.ndarray:
+    """Run autoregressive rollout on one trajectory, return (rollout_steps+1, H, W) frames."""
+    cfg = MODELS[model_name]
+    frames = [traj[0, 0].cpu().numpy()]   # shape (H, W)
+
+    if cfg["type"] == "pixel":
+        model = models[model_name]
+        frame = traj[0:1]
+        for _ in range(rollout_steps):
+            frame = model(frame)
+            frames.append(frame[0, 0].cpu().numpy())
+
+    elif cfg["type"] == "patch_jepa":
+        m, dec = models[model_name]
+        z = m.online_encoder(traj[0:1])
+        for _ in range(rollout_steps):
+            z = m.predictor(z)
+            frames.append(dec(z)[0, 0].cpu().numpy())
+
+    return np.stack(frames)   # (rollout_steps+1, H, W)
+
+
+def save_eval_gifs(loaded: dict, trajs: torch.Tensor,
+                   rollout_steps: int, out_dir: Path) -> None:
+    """One GIF per model: [model prediction | ground truth] side-by-side, animated."""
+    try:
+        from PIL import Image, ImageDraw
+    except ImportError:
+        print("  [skip gif] install pillow for GIF output")
+        return
+
+    n_trajs = trajs.shape[0]
+    rollout_steps = min(rollout_steps, trajs.shape[1] - 1)
+
+    scale = 4
+    H, W = 64, 64
+    gap = 4
+    label_h = 18
+    panel = H * scale
+    img_w = 2 * panel + gap
+    img_h = label_h + panel
+
+    def to_gray_rgb(f: np.ndarray) -> np.ndarray:
+        g = (np.clip(f, 0, 1) * 255).astype(np.uint8)
+        return np.stack([g, g, g], axis=-1)
+
+    for model_name, model_obj in loaded.items():
+        device = next(iter(
+            model_obj.parameters() if not isinstance(model_obj, tuple)
+            else model_obj[0].parameters()
+        )).device
+
+        # Pick trajectory with lowest average MSE → cleanest looking GIF
+        best_score, best_traj_idx = float("inf"), 0
+        for ti in range(n_trajs):
+            traj = trajs[ti].to(device)
+            pred_frames = collect_rollout_frames(model_name, traj, rollout_steps, loaded)
+            gt_frames   = traj[:, 0].cpu().numpy()  # (T, H, W)
+            score = float(np.mean((pred_frames[1:] - gt_frames[1:rollout_steps+1]) ** 2))
+            if score < best_score:
+                best_score, best_traj_idx = score, ti
+
+        traj = trajs[best_traj_idx].to(device)
+        pred_frames = collect_rollout_frames(model_name, traj, rollout_steps, loaded)
+        gt_frames   = traj[:, 0].cpu().numpy()   # (T, H, W)
+
+        gif_imgs = []
+        for fi in range(rollout_steps + 1):
+            img = Image.new("RGB", (img_w, img_h), (15, 15, 15))
+            draw = ImageDraw.Draw(img)
+
+            draw.text((2, 2),
+                      f"{model_name}  step {fi}  |  left=model  right=GT",
+                      fill=(200, 200, 200))
+
+            pred_img = Image.fromarray(to_gray_rgb(pred_frames[fi])).resize(
+                (panel, panel), Image.NEAREST)
+            gt_img = Image.fromarray(
+                to_gray_rgb(gt_frames[min(fi, len(gt_frames) - 1)])).resize(
+                (panel, panel), Image.NEAREST)
+
+            img.paste(pred_img, (0, label_h))
+            img.paste(gt_img, (panel + gap, label_h))
+            gif_imgs.append(img)
+
+        out = out_dir / f"gif_rollout_{model_name.replace('-', '_').lower()}.gif"
+        gif_imgs[0].save(out, save_all=True, append_images=gif_imgs[1:],
+                         duration=120, loop=0)
+        print(f"  Saved: {out}")
 
 
 def save_summary(one_step: dict, rollout: dict, ood: dict, out_dir: Path) -> None:
@@ -474,6 +567,8 @@ def main():
         print(f"  {name}: competence horizon = step {horizon}")
 
     plot_multistep_comparison(rollout_results, OUT_DIR)
+    print(f"\n[2b/3] Saving rollout GIFs...")
+    save_eval_gifs(loaded, trajs, args.rollout_steps, OUT_DIR)
 
     # 3. OOD  — use a small in-memory batch for speed on CPU
     print("\n[3/3] OOD robustness...")

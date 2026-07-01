@@ -117,10 +117,10 @@ def main() -> None:
     vis_steps = sorted(set(min(s, args.n_steps) for s in [0, 1, args.n_steps // 2, args.n_steps]))
     fig, axes = plt.subplots(2, len(vis_steps), figsize=(3 * len(vis_steps), 6))
     for col, s in enumerate(vis_steps):
-        axes[0, col].imshow(model_post[s], cmap="viridis", vmin=0, vmax=1, interpolation="nearest")
+        axes[0, col].imshow(model_post[s], cmap="gray", vmin=0, vmax=1, interpolation="nearest")
         axes[0, col].set_title(f"Model  step {s}", fontsize=8)
         axes[0, col].axis("off")
-        axes[1, col].imshow(gt_post[s], cmap="viridis", vmin=0, vmax=1, interpolation="nearest")
+        axes[1, col].imshow(gt_post[s], cmap="gray", vmin=0, vmax=1, interpolation="nearest")
         axes[1, col].set_title(f"Ground truth  step {s}", fontsize=8)
         axes[1, col].axis("off")
     fig.suptitle(f"Post-intervention rollout ({args.intervention}, t*={args.t_star})", fontsize=10)
