@@ -379,6 +379,46 @@ ssh <unilogin>@login01.sc.uni-leipzig.de "cd ~/lenia-world-model && \
 
 ---
 
+## Evaluation & Intervention Analysis
+
+### Pixel-space evaluation (`evaluation/evaluate_all.py`)
+
+Fair comparison of Pixel-CNN, Pixel-ViT, and Patch-JEPA in pixel space.
+JEPA-CNN is excluded — its predictor outputs flat embeddings with no pixel decoder.
+
+| Scenario | What is measured | Data |
+|---|---|---|
+| One-step prediction | MSE / PSNR / SSIM at t+1 | 2000 frame pairs from val set |
+| Multi-step rollout | MSE per step vs. identity baseline → competence horizon | 5 val trajectories, 30 steps |
+| OOD robustness | One-step MSE at σ ∈ {0.00, 0.02, 0.05, 0.10, 0.20} noise | 256 val pairs |
+
+```bash
+python evaluation/evaluate_all.py --n-traj 5 --rollout-steps 30 --max-samples 2000
+```
+
+Results and plots: `evaluation/results/`  
+Detailed findings: `evaluation/README.md`
+
+### Intervention analysis (`interventions/run_all_interventions.py`)
+
+Causal probing: the model rolls `t_star` steps autoregressively from `traj[0]`, then the last predicted frame is perturbed. Both the model and the real Lenia simulator continue from the perturbed frame. MSE between model and simulator is measured per step.
+
+| Intervention | What it tests |
+|---|---|
+| `inject_blob` | New organism seed added at a random location |
+| `zero_region` | Circular region killed (set to 0) |
+| `mirror_patch` | Local patch horizontally flipped |
+| `scale_density` | All cell values scaled by 1.5 |
+| `add_noise` | σ=0.05 Gaussian noise added everywhere |
+
+```bash
+python interventions/run_all_interventions.py --n-traj 5 --t-star 10 --n-steps 30
+```
+
+Results and plots: `experiments/intervention_results/`
+
+---
+
 ## Branching Strategy
 
 - **main**: Stable, production-ready code.

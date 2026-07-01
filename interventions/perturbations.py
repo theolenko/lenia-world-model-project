@@ -42,7 +42,7 @@ def mirror_patch(frame: np.ndarray, center=None, half_size=12, rng=None) -> np.n
     return out.astype(np.float32)
 
 
-def scale_density(frame: np.ndarray, factor=1.5) -> np.ndarray:
+def scale_density(frame: np.ndarray, factor=1.5, rng=None) -> np.ndarray:
     """Globally scale the frame's density up (factor>1) or down (factor<1)."""
     return np.clip(frame * factor, 0, 1).astype(np.float32)
 
