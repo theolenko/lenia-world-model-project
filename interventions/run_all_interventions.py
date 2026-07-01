@@ -119,23 +119,25 @@ def model_rollout(model_name: str, start_frame: np.ndarray,
 def plot_frame_snapshots(intv_name: str,
                          model_pres: dict, model_posts: dict,
                          gt_pre: np.ndarray, gt_post: np.ndarray,
-                         intervened: np.ndarray, n_steps: int, t_star: int,
+                         model_intervened: dict, n_steps: int, t_star: int,
                          out_dir: Path) -> None:
     """Full timeline grid: pre-rollout | before-perturbation | PERTURBED | post-rollout.
 
     Columns:
       pre_show  — a few frames before intervention (blue headers)
-      t_star    — the GT frame right before perturbation (labeled "before →")
-      intervened — the shared perturbed frame, red border (labeled "← PERTURBED")
+      t_star    — the model's own frame right before perturbation (labeled "before →")
+      intervened — each model's own perturbed frame, red border (labeled "← PERTURBED")
       post_show  — model/GT frames after intervention (orange headers)
 
-    Showing both 't_star' and 'intervened' side by side makes the perturbation
-    immediately visible as the pixel difference between those two adjacent columns.
+    Each model's perturbed frame differs slightly (different t* predictions), so
+    showing model_pres[m][-1] vs model_intervened[m] reveals the actual edit.
+    GT row uses the first model's gt_post (run from first model's perturbed frame).
     """
     pre_show = sorted({0, t_star // 2}) if t_star > 2 else [0]
     post_show = sorted({1, max(2, n_steps // 4), n_steps // 2, n_steps})
 
     models = list(model_posts.keys())
+    first_model = models[0] if models else None
     n_rows = len(models) + 1   # models + GT
     # cols: pre | before-perturbation | PERTURBED | post
     n_cols = len(pre_show) + 1 + 1 + len(post_show)
@@ -166,7 +168,7 @@ def plot_frame_snapshots(intv_name: str,
 
     # ── Draw each row ──────────────────────────────────────────
     def draw_row(row: int, pre_frames: np.ndarray, post_frames: np.ndarray,
-                 label: str) -> None:
+                 row_intervened: np.ndarray, label: str) -> None:
         axes[row, 0].set_ylabel(label, fontsize=9, fontweight="bold",
                                 rotation=0, labelpad=65, va="center")
 
@@ -177,16 +179,15 @@ def plot_frame_snapshots(intv_name: str,
                 cmap="gray", vmin=0, vmax=1)
             axes[row, col].axis("off")
 
-        # Frame right before perturbation (gt_pre[t_star] for GT row;
-        # model_pres[m][t_star] for model rows — shows where model was before intervention)
+        # Frame right before perturbation (model's own predicted frame at t*)
         axes[row, before_col].imshow(
             np.clip(pre_frames[min(t_star, len(pre_frames) - 1)], 0, 1),
             cmap="gray", vmin=0, vmax=1)
         axes[row, before_col].axis("off")
 
-        # Perturbed frame — same for all rows (shared canonical intervention)
+        # Perturbed frame — each model's own intervened frame
         ax_intv = axes[row, intv_col]
-        ax_intv.imshow(np.clip(intervened, 0, 1), cmap="gray", vmin=0, vmax=1)
+        ax_intv.imshow(np.clip(row_intervened, 0, 1), cmap="gray", vmin=0, vmax=1)
         ax_intv.axis("off")
         for spine in ax_intv.spines.values():
             spine.set_visible(True)
@@ -201,10 +202,14 @@ def plot_frame_snapshots(intv_name: str,
             axes[row, intv_col + 1 + offset].axis("off")
 
     for row, model_name in enumerate(models):
+        row_intv = model_intervened.get(model_name,
+                   model_intervened.get(first_model, np.zeros_like(gt_pre[0])))
         draw_row(row, model_pres[model_name], model_posts[model_name],
-                 f"{model_name}\n(model)")
+                 row_intv, f"{model_name}\n(model)")
 
-    draw_row(len(models), gt_pre, gt_post, "Lenia GT\n(simulator)")
+    # GT row: use first model's gt_post (Lenia run from first model's perturbed frame)
+    gt_intv = model_intervened.get(first_model, np.zeros_like(gt_pre[0]))
+    draw_row(len(models), gt_pre, gt_post, gt_intv, "Lenia GT\n(simulator)")
 
     plt.tight_layout()
 
@@ -416,50 +421,68 @@ def main():
         for traj_i in range(args.n_traj):
             t0 = raw[traj_i, 0]  # first frame of trajectory — same as run_intervention.py
 
-            # Run Lenia GT for t_star steps to get the canonical t* frame.
-            # The intervention is applied to this shared GT frame so that all
-            # models start from the SAME perturbed state and compare against
-            # the SAME Lenia GT continuation.
-            gt_pre = lenia_rollout(t0, args.t_star, fK)
-            gt_pre_frame = gt_pre[-1]   # Lenia state at t* — shared across all models
-            intervened = INTERVENTIONS[intv_name](gt_pre_frame, rng=rng)
-            gt_post = lenia_rollout(intervened, args.n_steps, fK)
+            # Alicia's design: each model rolls t_star steps autonomously, then
+            # the intervention is applied to its own predicted frame.  The Lenia
+            # GT runs from that SAME intervened frame (not from the real Lenia
+            # state at t*), so model and GT always share the same starting point.
+            # rng state is saved before the loop so all models get identical
+            # intervention parameters (same random position / noise seed).
+            gt_pre = lenia_rollout(t0, args.t_star, fK)  # for visualisation only
 
             traj_model_pres: dict = {}
             traj_model_posts: dict = {}
+            traj_gt_posts: dict = {}
+            traj_intervened: dict = {}
             traj_mse_sum = 0.0
 
-            for model_name in loaded:
-                pre_rollout = model_rollout(model_name, t0, args.t_star, loaded, device)
+            rng_state = rng.bit_generator.state  # snapshot — same params for all models
 
+            for model_name in loaded:
+                rng.bit_generator.state = rng_state  # reset so every model gets same position
+                pre_rollout = model_rollout(model_name, t0, args.t_star, loaded, device)
+                pre_frame = pre_rollout[-1]
+
+                intervened = INTERVENTIONS[intv_name](pre_frame, rng=rng)
                 model_post = model_rollout(model_name, intervened, args.n_steps, loaded, device)
+                gt_post    = lenia_rollout(intervened, args.n_steps, fK)
 
                 # index 0 is the intervened frame itself — skip it
                 mses = mse_per_step(model_post[1:], gt_post[1:])
                 accum[model_name].append(mses)
                 traj_mse_sum += float(np.mean(mses))
 
-                traj_model_pres[model_name] = pre_rollout
+                traj_model_pres[model_name]  = pre_rollout
                 traj_model_posts[model_name] = model_post
+                traj_gt_posts[model_name]    = gt_post
+                traj_intervened[model_name]  = intervened
+
+            # advance rng by one step after the trajectory so subsequent trajs differ
+            rng.bit_generator.state = rng_state
+            _ = INTERVENTIONS[intv_name](gt_pre[-1], rng=rng)
 
             # Keep frames from the trajectory where models track Lenia best
             traj_score = traj_mse_sum / max(len(loaded), 1)
+            first_model = next(iter(loaded))
             if traj_score < best_traj_score:
                 best_traj_score = traj_score
                 best_traj = {
-                    "model_pres": traj_model_pres,
-                    "model_posts": traj_model_posts,
-                    "gt_pre": gt_pre,
-                    "gt_post": gt_post,
-                    "intervened": intervened,
+                    "model_pres":       traj_model_pres,
+                    "model_posts":      traj_model_posts,
+                    "model_intervened": traj_intervened,
+                    "gt_pre":           gt_pre,
+                    # GT runs from the first model's intervened frame — use that post
+                    "gt_post":          traj_gt_posts[first_model],
+                    # canonical intervened frame for GIF shape / fallback
+                    "intervened":       traj_intervened[first_model],
                 }
 
-        # Expose last traj vars for snapshot plot (keeps existing plot behaviour)
-        last_model_pres  = best_traj.get("model_pres", {})
-        last_model_posts = best_traj.get("model_posts", {})
-        last_gt_pre      = best_traj.get("gt_pre")
-        last_gt_post     = best_traj.get("gt_post")
-        last_intervened  = best_traj.get("intervened")
+        # Expose best-traj vars for snapshot/GIF plots
+        last_model_pres       = best_traj.get("model_pres", {})
+        last_model_posts      = best_traj.get("model_posts", {})
+        last_model_intervened = best_traj.get("model_intervened", {})
+        last_gt_pre           = best_traj.get("gt_pre")
+        last_gt_post          = best_traj.get("gt_post")
+        last_intervened       = best_traj.get("intervened")
 
         # Average over trajectories, report divergence step
         intv_results = {}
@@ -478,7 +501,7 @@ def main():
         if last_gt_post is not None:
             plot_frame_snapshots(intv_name, last_model_pres, last_model_posts,
                                  last_gt_pre, last_gt_post,
-                                 last_intervened, args.n_steps, args.t_star, OUT_DIR)
+                                 last_model_intervened, args.n_steps, args.t_star, OUT_DIR)
             save_intervention_gif(intv_name, best_traj, args.t_star,
                                   args.n_steps, OUT_DIR)
 
