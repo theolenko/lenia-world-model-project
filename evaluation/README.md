@@ -298,14 +298,47 @@ Pixel-CNN's apparent strength in earlier evaluations was a trajectory-selection 
   problem, not a representation problem — the PatchDecoder was not trained to invert chained
   predictor outputs.
 
-### Why one-step MSE is a weak evaluation metric for Lenia
+### Why MSE is a poor fit for Lenia dynamics
 
 Lenia frames are highly autocorrelated — consecutive frames are nearly identical (identity
-baseline MSE ≈ 0.00045). A model that predicts "no change" scores 18× the identity baseline
-which sounds bad, but 0.008 MSE on a [0,1] image is imperceptible to the eye. This means:
+baseline MSE ≈ 0.00045). This means:
 1. Small numerical MSE differences between models are not visually meaningful
 2. A model can achieve very low MSE by being a near-identity predictor
 3. The competence horizon (multi-step) is a more honest discriminator
+
+But there is a deeper problem: **MSE is not just a weak evaluation metric — it was also likely
+the wrong training objective.** MSE penalises each pixel independently, which means:
+
+- **The mean-seeking bias**: when a model is uncertain about where the organism will be at t+1,
+  the MSE-optimal prediction is the average over all likely positions — a blurry, diffuse blob
+  centred on the expected location. This minimises squared error in expectation but produces
+  outputs that are not physically plausible Lenia states (no real Lenia frame looks like a
+  smooth Gaussian blob). All three pixel models exhibit this to varying degrees.
+
+- **Spatial misalignment is severely punished**: a prediction that is correct in every structural
+  detail but shifted by two pixels accumulates MSE at every displaced pixel, while a blurry copy
+  of the input incurs only small MSE. This is why the identity predictor is so hard to beat on
+  MSE — not because the models are bad, but because spatial misalignment is catastrophically
+  expensive in L2 space.
+
+- **No perceptual structure**: MSE does not know that a Lenia frame has organised blobs, edges,
+  or spatial patterns. It treats all pixel differences identically regardless of structure.
+
+**What would work better:**
+
+| Alternative | What it fixes | Drawback |
+|-------------|--------------|----------|
+| **SSIM loss** | Penalises structural differences (contrast, luminance, pattern) rather than per-pixel offset | Still symmetric — does not model organism movement |
+| **Perceptual loss (VGG/LPIPS)** | Matches features in learned representation space; robust to small spatial shifts | Requires a pretrained feature extractor; adds complexity |
+| **Optical flow–aware loss** | Warps the prediction by estimated flow before computing MSE — separates spatial error from prediction quality | Requires a flow estimator; flow in Lenia is not trivially defined |
+| **GAN discriminator** | Forces outputs to be perceptually plausible, not just close in L2 | Training instability; no longer a direct regression objective |
+| **Diffusion / score-matching** | Models the full distribution p(frame_{t+1} \| frame_t); can sample sharp predictions | Very slow inference; much higher compute cost |
+| **Evaluation-only: FVD** | Fréchet Video Distance — measures distributional similarity of rollouts using a video encoder | Not a training loss; requires many rollout samples |
+
+For this project, SSIM would be the simplest upgrade that would address the mean-seeking bias
+and the brightness artefact in the PatchDecoder. An optical flow–aware MSE would be the most
+principled fix for the spatial misalignment problem. A GAN or diffusion approach would produce
+the sharpest outputs but would significantly complicate training.
 
 ---
 
