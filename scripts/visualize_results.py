@@ -431,7 +431,7 @@ def plot_patch_jepa_predictions(n_samples: int = 5) -> None:
 
 def plot_loss_curves_patch_jepa() -> None:
     patch_jepa_dir = ROOT / "experiments/cluster/patch_jepa_v2_24523549/experiments/patch_jepa_20260625_163647"
-    patch_dec_dir  = ROOT / "experiments/cluster/patch_decoder_v2_24613464/experiments/patch_decoder_20260629_102420"
+    patch_dec_dir  = ROOT / "experiments/cluster/patch_decoder_v2_25015367/experiments/patch_decoder_20260702_110318"
 
     pj  = load_scalars(patch_jepa_dir, ["train/loss_epoch", "val/loss_epoch"])
     dec = load_scalars(patch_dec_dir,  ["train/loss_epoch", "val/loss_epoch"])
