@@ -212,21 +212,21 @@ or SSIM loss would be needed to suppress it.
 
 ### Intervention snapshots — per-intervention observations
 
-**`zero_region` — Pixel-CNN "regrowth" is correct Lenia physics:**  
-After the circular kill (black region), Pixel-CNN predicts that the organism quickly regrows into
-the killed area within 1–2 steps. This is not a model failure — it reflects real Lenia dynamics:
+**`zero_region` — regrowth is correct Lenia physics:**  
+After the circular kill (black region), all models predict that the organism regrows into the
+killed area within 1–2 steps. This is not a model failure — it reflects real Lenia dynamics:
 the cellular automaton's convolution kernel allows surrounding live cells to propagate back into
-dead regions, and Pixel-CNN's local receptive field correctly captures this local regeneration
-rule. This is confirmed by the GT row, which also shows the organism re-establishing itself.
-Pixel-CNN has the best `zero_region` MSE precisely because it learned this regeneration behavior.
-Pixel-ViT also shows some regrowth but with more spatial uncertainty.
+dead regions. This is confirmed by the GT row, which also shows the organism re-establishing.
+On active trajectories, **Patch-JEPA has the best `zero_region` step-10 MSE** (0.0830) — its
+patch-level representation better captures the local spatial dynamics of regrowth. Pixel-ViT
+is second (0.1035), Pixel-CNN worst (0.1078).
 
 **`inject_blob` — new organism not fully absorbed:**  
 All models show the injected blob initially as a bright spot (correct — they see the intervention).
-Pixel-CNN and Pixel-ViT track the subsequent evolution moderately well. Patch-JEPA handles the
-short-term accurately but collapses to noise by step 30. None of the models correctly predicts
-the complex interaction between the injected blob and the existing organism (this requires
-understanding long-range organism dynamics not present in the training objective).
+**Patch-JEPA tracks the short-term best** (step-10 MSE 0.0953 vs. ViT 0.1260, CNN 0.1189).
+None of the models correctly predicts the complex interaction between the injected blob and the
+existing organism over 30 steps — this requires understanding long-range organism dynamics
+not present in the training objective. Patch-JEPA collapses to noise by step 30 (0.2044).
 
 **`scale_density` — global perturbations are hardest:**  
 Multiplying all cells by 1.5 is the hardest intervention for every model (highest step-1 MSE
