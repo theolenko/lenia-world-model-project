@@ -393,9 +393,23 @@ def main():
     if not Path(args.data).exists():
         sys.exit(f"Val data not found: {args.data}")
 
-    # Load first n_traj trajectories from val set — use traj[0] as start frame
+    # Load n_traj trajectories where the organism stays active over the evaluation window.
+    # Filters by minimum mean pixel value over the first (t_star + n_steps) frames so we
+    # don't evaluate on trajectories where the organism dies early.
+    min_activity = 0.05
+    eval_window  = args.t_star + args.n_steps + 1
     with h5py.File(args.data, "r") as f:
-        raw = f["frames"][:args.n_traj].astype(np.float32)
+        all_frames = f["frames"]   # (N, T, H, W)
+        selected = []
+        for i in range(all_frames.shape[0]):
+            chunk = all_frames[i, :eval_window].astype(np.float32)
+            if chunk.max() > 1.0:
+                chunk /= 255.0
+            if chunk.mean(axis=(1, 2)).min() >= min_activity:
+                selected.append(all_frames[i].astype(np.float32))
+            if len(selected) == args.n_traj:
+                break
+    raw = np.stack(selected)
     if raw.max() > 1.0:
         raw /= raw.max()
     # raw shape: (n_traj, T, H, W)

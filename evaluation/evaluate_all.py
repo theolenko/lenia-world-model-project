@@ -113,9 +113,27 @@ def load_patch_jepa_model(cfg: dict, device: torch.device):
     return m.eval(), dec.eval()
 
 
-def load_trajectories(n_traj: int, device: torch.device) -> torch.Tensor:
+def load_trajectories(n_traj: int, device: torch.device,
+                      min_activity: float = 0.05, rollout_steps: int = 30) -> torch.Tensor:
+    """Load n_traj trajectories where the organism stays active throughout the rollout window.
+
+    Filters by minimum mean pixel value over the first `rollout_steps` frames, so we don't
+    accidentally evaluate on trajectories where the organism dies early (which would make all
+    models correctly predict black frames — correct but visually uninformative).
+    """
     with h5py.File(str(VAL_PATH), "r") as f:
-        raw = f["frames"][:n_traj].astype(np.float32)
+        all_frames = f["frames"]  # (N, T, H, W)
+        N = all_frames.shape[0]
+        selected = []
+        for i in range(N):
+            chunk = all_frames[i, :rollout_steps + 1].astype(np.float32)
+            if chunk.max() > 1.0:
+                chunk /= 255.0
+            if chunk.mean(axis=(1, 2)).min() >= min_activity:
+                selected.append(all_frames[i].astype(np.float32))
+            if len(selected) == n_traj:
+                break
+    raw = np.stack(selected)
     t = torch.tensor(raw)
     if t.max() > 1.0: t /= 255.0
     return t.unsqueeze(2).to(device)   # (N, T, 1, H, W)
