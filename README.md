@@ -133,13 +133,20 @@ Same JEPA principle but with **ViTEncoder(pool=False)**, keeping the 64 patch em
 - **Target encoder** (EMA) encodes `frame_t+1` → `(B, 64, embed_dim)` (no grad)
 - Loss: MSE over all patch positions + VICReg on flattened `(B×64, embed_dim)`
 
-After JEPA training, a **PatchDecoder** is trained separately on predictor outputs:
+After JEPA training, a **PatchDecoder** is trained separately:
 ```
 frame_t → frozen ViTEncoder → z_enc → frozen Predictor → z_pred → PatchDecoder → frame_t
 ```
-The decoder is trained on `predictor(encoder(frame_t))` — **not** on clean encoder embeddings. At inference the decoder always receives predictor outputs, so training on encoder embeddings directly would expose it to a distribution it never sees at test time.
+The decoder is trained to reconstruct `frame_t` from `predictor(encoder(frame_t))`.
 
-This enables true autoregressive rollout at inference:
+> **Known limitation:** The correct objective is to predict `frame_{t+1}` (next frame) as target,
+> not `frame_t`. Since `predictor(encoder(frame_t)) ≈ encoder(frame_{t+1})` by the JEPA EMA
+> property, training with `frame_{t+1}` as target would teach the decoder to invert the
+> next-frame embedding back to pixels — the actual goal. The current `frame_t` target teaches
+> the decoder to "undo" the predictor's temporal shift, producing near-identity predictions.
+> See `evaluation/README.md` for the quantitative impact.
+
+Autoregressive rollout at inference:
 ```
 z_0 = encode(frame_0)
 z_1 = predictor(z_0)  →  decoder(z_1)  =  frame_1_pred
@@ -356,19 +363,24 @@ ssh <unilogin>@login01.sc.uni-leipzig.de "cd ~/lenia-world-model && \
 | Pixel-ViT    | ~0.022         | 100    | Pixel MSE — ViT encoder, same task         |
 | JEPA-CNN     | ~0.049         | 100    | Embedding MSE + VICReg (not comparable)    |
 | Patch-JEPA   | 0.01340        | 100    | Embedding MSE over 64 patches + VICReg     |
-| PatchDecoder | —              | 100    | Trained on predictor embeddings exclusively |
+| PatchDecoder | —              | 100    | val_loss=0.000533; trained on predictor embeddings, target=frame_t (see limitation above) |
 
-> Note: JEPA and Pixel model losses are measured in different spaces (embedding vs pixel MSE) and are **not directly comparable**. PatchDecoder is trained on `predictor(encoder(frame_t))` to match the exact distribution seen at inference.
+> Note: JEPA and Pixel model losses are in different spaces (embedding vs pixel MSE) and are **not directly comparable**.
 
-### Pixel-space evaluation (latest, job 24907728)
+### Pixel-space evaluation (latest, job 25010341)
 
 | Model | One-step MSE ↓ | PSNR ↑ | SSIM ↑ | Rollout horizon |
 |-------|---------------|--------|--------|----------------|
-| Pixel-CNN | 0.0084 | 20.9 dB | **0.917** | > step 30 |
-| Pixel-ViT | 0.0085 | 20.9 dB | 0.868 | step 13 |
-| Patch-JEPA | 0.0306 | 15.2 dB | 0.378 | step 1 |
+| Pixel-CNN | 0.00822 | 21.0 dB | 0.919 | > step 30 |
+| Pixel-ViT | 0.00810 | 21.1 dB | 0.869 | step 13 |
+| Patch-JEPA† | 0.00085 | 30.7 dB | **0.933** | step 2 |
 
 Identity baseline (no-change): MSE ≈ 0.00045, step-30 rollout ≈ 0.075.
+
+† Patch-JEPA one-step metrics are misleadingly good: the PatchDecoder was trained with `frame_t`
+as target (not `frame_{t+1}`), making it a near-identity predictor. Multi-step diverges to
+MSE=0.125 by step 30 (above the identity baseline), confirming it does not learn true dynamics.
+See `evaluation/README.md` for full analysis.
 
 ### Generated visualizations (`experiments/plots/`)
 
