@@ -121,15 +121,16 @@ def train_decoder(
 
         decoder.train()
         total_train = 0.0
-        for batch_idx, (frame_t, _) in enumerate(train_loader):
-            frame_t = frame_t.to(device)
+        for batch_idx, (frame_t, frame_t1) in enumerate(train_loader):
+            frame_t  = frame_t.to(device)
+            frame_t1 = frame_t1.to(device)
 
             with torch.no_grad():
                 z_enc  = encoder(frame_t)    # (B, N_patches, embed_dim)
-                patches = predictor(z_enc)   # always decode predictor output
+                patches = predictor(z_enc)   # predictor(enc(t)) ≈ enc(t+1)
 
             recon = decoder(patches)        # (B, 1, 64, 64)
-            loss = criterion(recon, frame_t)
+            loss = criterion(recon, frame_t1)  # target: next frame
 
             optimizer.zero_grad()
             loss.backward()
@@ -147,13 +148,13 @@ def train_decoder(
         decoder.eval()
         total_val = 0.0
         with torch.no_grad():
-            for frame_t, _ in val_loader:
-                frame_t = frame_t.to(device)
-                # Validate on predictor embeddings — matches inference distribution
+            for frame_t, frame_t1 in val_loader:
+                frame_t  = frame_t.to(device)
+                frame_t1 = frame_t1.to(device)
                 z_enc = encoder(frame_t)
                 patches = predictor(z_enc)
                 recon = decoder(patches)
-                total_val += criterion(recon, frame_t).item()
+                total_val += criterion(recon, frame_t1).item()  # target: next frame
 
         val_loss = total_val / len(val_loader)
         writer.add_scalar("val/loss_epoch", val_loss, epoch)
