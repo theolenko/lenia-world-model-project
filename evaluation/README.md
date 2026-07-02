@@ -46,7 +46,8 @@ Measured on 2000 held-out frame pairs from `v2_lenia_val_chunked.h5`.
   organism blobs. Visually, Patch-JEPA one-step outputs look noticeably brighter and less
   clean than Pixel-CNN or Pixel-ViT despite the better numbers.
 - **Pixel-CNN and Pixel-ViT** are the more honest performers at step 1. Their ~18× identity
-  MSE reflects genuine prediction error. Pixel-ViT edges out on PSNR; Pixel-CNN on SSIM.
+  MSE reflects genuine prediction error. Both are essentially tied on PSNR (20.93 vs 20.92);
+  Pixel-CNN leads clearly on SSIM (0.918 vs 0.869).
 - **All models score worse than the identity predictor on one-step MSE (ratio ≈ 18×).** The
   identity baseline of 0.00045 measures how much a Lenia frame changes between t and t+1. Any
   model that tries to predict where the organism actually goes — and gets it slightly wrong
@@ -383,13 +384,13 @@ the sharpest outputs but would significantly complicate training.
 - **The identity baseline MSE (0.00045) is not zero.** This is a useful sanity check but not
   the right floor — a model that simply copies the input and adds the average per-step motion
   vector would score better than 0.00045 without learning any physics.
-- **t*=10 pre-intervention steps** mean all intervention step-1 MSEs (~0.031–0.050) already
+- **t*=10 pre-intervention steps** mean all intervention step-1 MSEs (~0.043–0.092) already
   include 10 steps of autonomous prediction error. A shorter `t_star` (e.g. 2–3) would better
   isolate the intervention response from accumulated drift.
 - **Interventions are not in the training distribution.** No model was exposed to zeroed
   regions, injected blobs, or scaled densities during training. All intervention results reflect
   out-of-distribution generalisation, not in-distribution behavior.
-- **OOD relative percentages are misleading for Patch-JEPA.** Its +775% at σ=0.2 sounds
+- **OOD relative percentages are misleading for Patch-JEPA.** Its +768% at σ=0.2 sounds
   catastrophic but the absolute MSE (0.013) is still lower than pixel models (~0.027). The
   high relative percentage is an artifact of Patch-JEPA's very low clean baseline. Visual
   quality under noise is another matter and is not captured by MSE.
@@ -413,9 +414,11 @@ the sharpest outputs but would significantly complicate training.
   autoregressive rollout, the predictor receives chained outputs (`predictor(predictor(…))`),
   a distribution it was never trained on. Max pixel values climb to 0.99+ by step 12 and the
   output degrades to salt-and-pepper noise — visually unusable beyond step 10.
-- **Patch-JEPA's MSE/SSIM scores overstate its quality** because: (1) Lenia is slow-changing
-  so near-identity predictions score well, (2) the brightness bias inflates structural
-  similarity metrics, and (3) MSE rewards blurry/diffuse predictions that overlap with GT.
+- **Patch-JEPA's one-step MSE/SSIM scores are partially inflated** because: (1) Lenia is
+  slow-changing so near-identity predictions score well, (2) the brightness bias inflates
+  structural similarity metrics, and (3) MSE rewards blurry/diffuse predictions that overlap
+  with GT. However, the superiority on multi-step rollout and interventions (on active
+  trajectories) is genuine — the JEPA encoder/predictor learned real dynamics, not just stasis.
 - The JEPA model was never evaluated on its **latent representation quality** — e.g. whether
   embeddings cluster by organism type or support causal reasoning. The pixel-space evaluation
   measures only the decoder output, not the representation itself, which is JEPA's actual
