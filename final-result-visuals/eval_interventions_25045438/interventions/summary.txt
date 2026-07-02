@@ -1,0 +1,28 @@
+============================================================
+INTERVENTION SUMMARY
+============================================================
+
+── inject_blob ──
+  Pixel-CNN: step1=0.06489  step10=0.11891  step30=0.18504
+  Pixel-ViT: step1=0.05920  step10=0.12596  step30=0.19534
+  Patch-JEPA: step1=0.04540  step10=0.09528  step30=0.20442
+
+── zero_region ──
+  Pixel-CNN: step1=0.06255  step10=0.10777  step30=0.16550
+  Pixel-ViT: step1=0.05520  step10=0.10353  step30=0.17074
+  Patch-JEPA: step1=0.04276  step10=0.08301  step30=0.17322
+
+── mirror_patch ──
+  Pixel-CNN: step1=0.06344  step10=0.11531  step30=0.18317
+  Pixel-ViT: step1=0.05823  step10=0.11239  step30=0.18416
+  Patch-JEPA: step1=0.04596  step10=0.09097  step30=0.19097
+
+── scale_density ──
+  Pixel-CNN: step1=0.09203  step10=0.12357  step30=0.17734
+  Pixel-ViT: step1=0.08957  step10=0.11284  step30=0.17947
+  Patch-JEPA: step1=0.06820  step10=0.11359  step30=0.20098
+
+── add_noise ──
+  Pixel-CNN: step1=0.06425  step10=0.12472  step30=0.18400
+  Pixel-ViT: step1=0.05922  step10=0.11983  step30=0.18070
+  Patch-JEPA: step1=0.04600  step10=0.09442  step30=0.19531

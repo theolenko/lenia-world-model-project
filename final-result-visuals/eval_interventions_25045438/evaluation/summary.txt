@@ -1,0 +1,51 @@
+============================================================
+EVALUATION SUMMARY — v2 models
+============================================================
+
+── One-step prediction ──────────────────────────────────────
+  Pixel-CNN
+    MSE   : 0.00829 ± 0.00192  (identity=0.00045, ratio=18.25x)
+    PSNR  : 20.93 dB
+    SSIM  : 0.9180
+  Pixel-ViT
+    MSE   : 0.00841 ± 0.00225  (identity=0.00044, ratio=18.94x)
+    PSNR  : 20.92 dB
+    SSIM  : 0.8689
+  Patch-JEPA
+    MSE   : 0.00074 ± 0.00008  (identity=0.00045, ratio=1.64x)
+    PSNR  : 31.34 dB
+    SSIM  : 0.9488
+
+── Multi-step rollout ───────────────────────────────────────
+  Pixel-CNN  [pixel MSE]
+    Step  1: model=0.00454  baseline=0.00333
+    Step 30: model=0.15342  baseline=0.11276
+    Competence horizon: step 1
+  Pixel-ViT  [pixel MSE]
+    Step  1: model=0.00327  baseline=0.00333
+    Step 30: model=0.14910  baseline=0.11276
+    Competence horizon: step 8
+  Patch-JEPA  [pixel MSE]
+    Step  1: model=0.00173  baseline=0.00333
+    Step 30: model=0.16730  baseline=0.11276
+    Competence horizon: step 10
+
+── OOD robustness ───────────────────────────────────────────
+  Pixel-CNN:
+    σ=0.00: 0.00895  (+0.0% vs clean)
+    σ=0.02: 0.00957  (+6.9% vs clean)
+    σ=0.05: 0.01210  (+35.1% vs clean)
+    σ=0.10: 0.01721  (+92.2% vs clean)
+    σ=0.20: 0.02722  (+203.9% vs clean)
+  Pixel-ViT:
+    σ=0.00: 0.00797  (+0.0% vs clean)
+    σ=0.02: 0.00840  (+5.4% vs clean)
+    σ=0.05: 0.01028  (+28.9% vs clean)
+    σ=0.10: 0.01510  (+89.4% vs clean)
+    σ=0.20: 0.02880  (+261.3% vs clean)
+  Patch-JEPA:
+    σ=0.00: 0.00154  (+0.0% vs clean)
+    σ=0.02: 0.00163  (+5.7% vs clean)
+    σ=0.05: 0.00214  (+38.8% vs clean)
+    σ=0.10: 0.00401  (+160.5% vs clean)
+    σ=0.20: 0.01336  (+767.5% vs clean)
