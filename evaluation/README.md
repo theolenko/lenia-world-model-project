@@ -33,19 +33,24 @@ Measured on 2000 held-out frame pairs from `v2_lenia_val_chunked.h5`.
 |-------|-------|-------------|--------|-----------------------|
 | Pixel-CNN | 0.00859 | 20.86 | 0.917 | 0.00045 |
 | Pixel-ViT | 0.00814 | 21.05 | 0.869 | 0.00045 |
-| Patch-JEPA | **0.00074** | **31.35** | **0.949** | 0.00045 |
+| Patch-JEPA | 0.00074 | 31.35 | 0.949 | 0.00045 |
 
 **Key findings:**
-- **Patch-JEPA achieves the best one-step metrics** by a wide margin. Predictions are sharp and
-  structurally accurate — visually comparable to or better than pixel models. The low MSE
-  (1.64× identity baseline) partially reflects Lenia's slow dynamics (frames change little per
-  step), but the SSIM=0.949 confirms genuine structural accuracy, not just copying the input.
-- **Pixel-CNN and Pixel-ViT** score ~18× the identity baseline. They are nearly equal; Pixel-ViT
-  edges out on PSNR, Pixel-CNN on SSIM.
-- **Caution on one-step MSE as the sole metric:** Lenia evolves slowly. Even copying the current
-  frame as a prediction (identity baseline) gives MSE≈0.00045. All models beat this, but the
-  gap between model and identity is modest. Multi-step performance (Scenario 2) is a much
-  stricter test of whether the model actually learned dynamics.
+- **Patch-JEPA's one-step numbers are misleadingly flattering.** The low MSE (1.64× identity
+  baseline) and high SSIM are partly an artifact of how the PatchDecoder was trained: it
+  predicts `frame_{t+1}` from predictor embeddings, but because Lenia changes slowly, the
+  predictor output still carries strong information about the current frame, and the decoder
+  can score well by predicting something close to the input. Additionally, the MSE-trained
+  decoder has a systematic brightness bias: it outputs slightly elevated pixel values
+  (measured mean ~0.14 vs GT mean ~0.10), creating a grayish background and overexposed
+  organism blobs. Visually, Patch-JEPA one-step outputs look noticeably brighter and less
+  clean than Pixel-CNN or Pixel-ViT despite the better numbers.
+- **Pixel-CNN and Pixel-ViT** are the more honest performers at step 1. Their ~18× identity
+  MSE reflects genuine prediction error. Pixel-ViT edges out on PSNR; Pixel-CNN on SSIM.
+- **One-step MSE is a weak discriminator for Lenia.** Frames change very slowly (identity
+  baseline MSE=0.00045). All differences between models are numerically small and hard to
+  attribute cleanly to model quality vs. the easy nature of the task. Multi-step rollout
+  (Scenario 2) is a more honest test.
 
 Plot: `evaluation/results/one_step_comparison.png`  
 Visual grid (input | predicted | GT per model): `evaluation/results/one_step_grid.png`
@@ -72,12 +77,15 @@ Identity baseline: step 1 = 0.00352, step 30 = 0.07457.
 - **Pixel-ViT** crosses the identity baseline around step 13. ViT's global self-attention is
   more sensitive to accumulated input drift — small errors compound into global attention pattern
   shifts that cascade quickly.
-- **Patch-JEPA** holds competence until around step 10, then diverges sharply to ~0.13 by step
-  20. The curve shows a characteristic spike (step ~20) then slight recovery, which corresponds
-  to the PatchDecoder collapsing to salt-and-pepper noise once predictor embeddings drift out of
-  its training distribution. After full collapse the output is approximately constant random
-  noise, which gives stable but high MSE. The JEPA encoder and predictor may still be producing
-  meaningful embeddings after step 10 — the decoder is the bottleneck.
+- **Patch-JEPA** crosses the identity baseline around step 10 and diverges to ~0.13 by step 20.
+  The curve shows a characteristic spike then partial recovery: this is the PatchDecoder
+  collapsing to salt-and-pepper noise as predictor embeddings drift outside their training
+  distribution. Visually, Patch-JEPA outputs go from slightly overexposed but recognisable
+  (steps 1–8) to increasingly bright saturated patches (steps 8–15) to full pixel-noise
+  (steps 15+). The max pixel value under rollout climbs from ~0.97 at step 1 to ~0.99+ by
+  step 12, with individual patches saturating at 1.0. This makes long Patch-JEPA rollouts
+  visually unusable. The JEPA encoder and predictor may still be tracking meaningful dynamics
+  in embedding space after step 10 — the decoder is the bottleneck.
 
 Plot: `evaluation/results/multistep_rollout_comparison.png`
 
@@ -179,10 +187,14 @@ experiments/intervention_results/
 
 ### One-step grid (`one_step_grid.png`)
 
-All three models produce visually convincing one-step predictions. Pixel-CNN and Pixel-ViT show
-slight blur in fine structures (expected from MSE training). Patch-JEPA predictions are sharp
-and match ground truth structure closely — the fixed decoder (target=`frame_{t+1}`) produces
-notably cleaner outputs than earlier decoder versions.
+Pixel-CNN and Pixel-ViT produce clean, well-calibrated one-step predictions with correct
+background level and organism brightness. Patch-JEPA predictions have a visible brightness
+artefact: the background is slightly grey instead of black, and the organism blobs appear
+overexposed and more diffuse. This is a systematic bias of the MSE-trained PatchDecoder —
+it outputs a slightly elevated mean pixel value (~0.14 vs GT ~0.10) across all predictions,
+expanding the effective dynamic range and making the output look "washed out" or scaled up
+compared to ground truth. This is not fixable by retraining with MSE alone; a perceptual
+or SSIM loss would be needed to suppress it.
 
 ### Intervention snapshots — per-intervention observations
 
@@ -231,20 +243,24 @@ pattern) are not catastrophically high.
 
 ### Which model is best overall?
 
-**Pixel-CNN** is the most reliable and presentable model across all scenarios. It:
+**Pixel-CNN** is the most reliable and visually cleanest model across all scenarios:
 - Stays below the identity baseline for all 30 autoregressive steps
-- Has the best intervention tracking in 4 of 5 interventions
-- Produces visually coherent outputs at all time horizons
-- Is the smallest and fastest model
+- Best intervention tracking in 4 of 5 interventions
+- Produces coherent, correctly-scaled outputs at all time horizons
+- Smallest and fastest model
 
-**Patch-JEPA** produces the best single-step pixel quality and holds competence to step 10,
-but its long-rollout behavior (noise collapse) makes it unsuitable as a standalone predictor.
-Its JEPA encoder almost certainly produces better internal representations of Lenia state —
-the decoder is the bottleneck, not the world model itself.
+**Pixel-ViT** is slightly better than Pixel-CNN at step 1 but degrades faster (horizon=step 13)
+and is the most sensitive to perturbations. Second place overall.
 
-**Pixel-ViT** sits between the two: better than Pixel-CNN at step 1 but worse from step 13
-onward. It is the most sensitive to perturbations (highest intervention MSE across all 5
-interventions), suggesting ViT's global attention mechanism is more easily disrupted.
+**Patch-JEPA** has the best MSE numbers on paper but is the worst model to look at in practice:
+- One-step outputs are visibly overexposed with a grey background artefact
+- Rollouts collapse to bright salt-and-pepper noise after ~10 steps
+- Intervention tracking is competitive with Pixel-ViT at step 10 but breaks down at step 30
+- The JEPA encoder likely encodes richer dynamics in latent space, but none of that quality
+  survives the PatchDecoder bottleneck into pixel space
+
+**Conclusion: Patch-JEPA's strong MSE/SSIM numbers do not reflect its visual quality.
+Pixel-CNN is the model that actually works.**
 
 ### What the models actually learned
 
@@ -314,17 +330,19 @@ which sounds bad, but 0.008 MSE on a [0,1] image is imperceptible to the eye. Th
   prediction, which may discard information needed for long-horizon dynamics.
 
 **Patch-JEPA:**
+- **The PatchDecoder produces visually poor output despite good MSE numbers.** It has a
+  systematic brightness bias (predicted mean ~0.14 vs GT mean ~0.10), a grey background
+  instead of black, and overexposed organism blobs. This is a known MSE-decoder artefact:
+  the loss does not penalise spatial incoherence or mean offset, so the decoder learns a
+  slightly scaled-up output distribution.
 - **The PatchDecoder is the primary bottleneck**, not the JEPA encoder/predictor. Under
-  autoregressive rollout, the predictor receives its own previous output (`predictor(predictor(…))`),
-  a distribution it was never trained on. The decoder amplifies this drift into visible noise
-  after ~10 steps.
-- **Decoder training distribution mismatch at test time for rollout:** The decoder saw single-step
-  predictor outputs during training. During autoregressive evaluation it sees multi-step chained
-  predictor outputs. These distributions diverge quickly.
-- **MSE loss on decoder** produces outputs that are mean predictions over the uncertainty in
-  the embedding-to-pixel mapping. A perceptual loss (LPIPS or SSIM) would reduce blur and
-  likely also suppress the noise collapse by penalising spatial incoherence.
+  autoregressive rollout, the predictor receives chained outputs (`predictor(predictor(…))`),
+  a distribution it was never trained on. Max pixel values climb to 0.99+ by step 12 and the
+  output degrades to salt-and-pepper noise — visually unusable beyond step 10.
+- **Patch-JEPA's MSE/SSIM scores overstate its quality** because: (1) Lenia is slow-changing
+  so near-identity predictions score well, (2) the brightness bias inflates structural
+  similarity metrics, and (3) MSE rewards blurry/diffuse predictions that overlap with GT.
 - The JEPA model was never evaluated on its **latent representation quality** — e.g. whether
-  its embeddings cluster by organism type, predict downstream Lenia statistics, or support
-  causal disentanglement. The pixel-space evaluation only measures the decoder's output, not
-  the richness of the internal representation, which is JEPA's actual design goal.
+  embeddings cluster by organism type or support causal reasoning. The pixel-space evaluation
+  measures only the decoder output, not the representation itself, which is JEPA's actual
+  design goal. A probing study on the embeddings directly would be more informative.
