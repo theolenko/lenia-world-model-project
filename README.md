@@ -364,20 +364,22 @@ ssh <unilogin>@login01.sc.uni-leipzig.de "cd ~/lenia-world-model && \
 
 > Note: JEPA and Pixel model losses are in different spaces (embedding vs pixel MSE) and are **not directly comparable**.
 
-### Pixel-space evaluation (latest, job 25038541)
+### Pixel-space evaluation (latest, job 25045438 — active trajectories only)
 
-| Model | One-step MSE ↓ | PSNR ↑ | SSIM ↑ | Rollout horizon |
-|-------|---------------|--------|--------|----------------|
-| Pixel-CNN | 0.00859 | 20.86 dB | 0.917 | > step 30 |
-| Pixel-ViT | 0.00814 | 21.05 dB | 0.869 | step 13 |
-| Patch-JEPA | **0.00074** | **31.35 dB** | **0.949** | step 10 |
+| Model | One-step MSE ↓ | PSNR ↑ | SSIM ↑ | Rollout horizon (active traj.) |
+|-------|---------------|--------|--------|-------------------------------|
+| Pixel-CNN | 0.00829 | 20.93 dB | 0.918 | none (above identity at step 1) |
+| Pixel-ViT | 0.00841 | 20.92 dB | 0.869 | step 8 |
+| Patch-JEPA | **0.00074** | **31.34 dB** | **0.949** | **step 10** |
 
-Identity baseline (no-change): MSE ≈ 0.00045, step-30 rollout ≈ 0.075.
+Identity baseline (no-change): MSE ≈ 0.00045 one-step, step-1 rollout ≈ 0.00333, step-30 ≈ 0.113.
 
-Patch-JEPA's low one-step MSE reflects both genuine prediction quality and slow Lenia dynamics
-(frames change slowly, so near-current-frame predictions score well). Competence horizon of
-step 10 shows it learns real dynamics up to that point, then diverges as autoregressive drift
-pushes embeddings out of the decoder's training distribution. See `evaluation/README.md`.
+Evaluation is on **active trajectories** (organism does not die during the eval window). Earlier
+numbers using random trajectory selection were dominated by dying-organism trajectories where all
+models trivially predict black, making Pixel-CNN appear best. On active organisms, Patch-JEPA is
+numerically best to step 10, Pixel-ViT to step 8; Pixel-CNN fails to beat the no-change baseline.
+Patch-JEPA one-step outputs have a visible brightness bias (pred mean ~0.14 vs GT ~0.10) and
+rollouts degrade to salt-and-pepper noise after ~step 10. See `evaluation/README.md`.
 
 ### Generated visualizations (`experiments/plots/`)
 
