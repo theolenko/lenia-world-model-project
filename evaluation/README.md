@@ -395,6 +395,22 @@ the sharpest outputs but would significantly complicate training.
   high relative percentage is an artifact of Patch-JEPA's very low clean baseline. Visual
   quality under noise is another matter and is not captured by MSE.
 
+### Missing evaluation criteria
+
+- **Validity of generated states**: predicted frames are never checked for physical plausibility
+  as Lenia states — only MSE against ground truth is measured. A model could produce low MSE
+  by outputting a blurry average that is not a valid Lenia configuration. A simulator-based
+  check (feeding predicted frames back into the Lenia kernel and measuring divergence) would
+  be a stronger validity criterion but was not implemented.
+- **Planning / downstream control**: no planning benchmark was run. The evaluation measures
+  prediction quality but not whether any model is actually useful for decision-making or
+  model-predictive control. The intervention experiments serve as a partial proxy — they test
+  whether the model tracks causal consequences of a state change — but they are not a formal
+  planning success metric.
+- **No rollout diversity metric**: all rollouts are deterministic from a fixed start frame.
+  Metrics like FVD (Fréchet Video Distance) that measure distributional realism of multi-step
+  rollouts were not computed.
+
 ### Model-specific limitations
 
 **Pixel-CNN / Pixel-ViT:**
